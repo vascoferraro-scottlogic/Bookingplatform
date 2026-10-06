@@ -1,0 +1,176 @@
+{
+  "nav": {
+    "bookings": "Bookings",
+    "notifications": "Notifications",
+    "maintenance": "Maintenance",
+    "content": "Content",
+    "streaming": "Streaming",
+    "admin": "Admin",
+    "events": "Events",
+    "messaging": "Messaging",
+    "settings": "Settings",
+    "help": "Help",
+    "signOut": "Sign Out",
+    "dashboard": "Dashboard"
+  },
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "close": "Close",
+    "loading": "Loading…",
+    "submit": "Submit",
+    "search": "Search",
+    "retry": "Retry",
+    "markAllRead": "Mark all read"
+  },
+  "status": {
+    "active": "Active",
+    "inactive": "Inactive",
+    "pending": "Pending",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "cancelled": "Cancelled",
+    "confirmed": "Confirmed"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "networkError": "Network error. Please check your connection.",
+    "notFound": "Not found.",
+    "unauthorized": "You are not authorised to perform this action."
+  },
+  "empty": {
+    "noResults": "No results found.",
+    "noNotifications": "No notifications.",
+    "noBookings": "No bookings."
+  },
+  "impersonation": {
+    "actingAs": "{name} — acting as {role} of {tenant}",
+    "exit": "Exit impersonation",
+    "exiting": "Exiting…",
+    "exitFailed": "Could not end impersonation.",
+    "networkError": "Network error ending impersonation.",
+    "staleSession": "A previous impersonation session has ended. Pick a club to start a new one."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "allRead": "All notifications marked as read."
+  },
+  "platformDashboard": {
+    "title": "Platform Dashboard",
+    "welcome": "Welcome, {name}. Pick a club to act on its behalf. Your real identity is preserved in every audit log entry."
+  },
+  "home": {
+    "title": "Club Management Platform",
+    "subtitle": "Multi-tenant bowling club platform",
+    "goToDashboard": "Go to Dashboard",
+    "signIn": "Sign In",
+    "register": "Register",
+    "addYourClub": "Add your club",
+    "browseClubs": "Browse Clubs",
+    "upcomingEvents": "Upcoming Events",
+    "viewAll": "View all →"
+  },
+  "club": {
+    "comingSoon": "We're still setting things up. {name} isn't open to members just yet — please check back once the club admin finishes onboarding.",
+    "upcomingEvents": "Upcoming Events",
+    "checkAvailability": "Check Availability",
+    "joinTitle": "Join {name}",
+    "joinSubtitle": "Become a member to book rinks, enter events, and more.",
+    "backToClub": "← Back to {name}",
+    "availabilityTitle": "Availability — {name}"
+  },
+  "availability": {
+    "loading": "Loading availability…",
+    "notAvailable": "Availability is not available for this club.",
+    "backToClub": "Back to club page",
+    "wantToBook": "Want to book a rink?",
+    "registerToBook": "Register to Book"
+  },
+  "quickBook": {
+    "title": "Book a Rink",
+    "subtitle": "Check availability and reserve your spot.",
+    "bookNow": "Book Now"
+  },
+  "upcomingBookings": {
+    "title": "Upcoming Bookings",
+    "viewAll": "View all →",
+    "noUpcoming": "No upcoming bookings."
+  },
+  "tenantSwitcher": {
+    "label": "Acting at:"
+  },
+  "join": {
+    "title": "Add your club to BookingPlatform",
+    "subtitle": "Tell us a wee bit about your club and we'll get you set up.",
+    "backToHomepage": "← Back to homepage",
+    "clubName": "Club name",
+    "clubNamePlaceholder": "e.g. Anyburgh Bowling Club",
+    "yourName": "Your name",
+    "email": "Email",
+    "phone": "Phone (optional)",
+    "country": "Country",
+    "countryPlaceholder": "Choose a country…",
+    "region": "Region or county (optional)",
+    "regionPlaceholder": "e.g. East Lothian, Auckland, NSW",
+    "notes": "Anything else we should know? (optional)",
+    "notesPlaceholder": "Number of greens, current website, anything that'll help us help you…",
+    "termsLabel": "I confirm I'm authorised to apply on behalf of this club and agree to be contacted by the BookingPlatform team about this application.",
+    "termsRequired": "Please agree to the terms before submitting.",
+    "submit": "Send application",
+    "submitting": "Sending…",
+    "receivedTitle": "Application received",
+    "receivedMessage": "Thanks for your interest in BookingPlatform. We've sent a confirmation to {email} and our team will be in touch within a few working days.",
+    "backToHomepageButton": "Back to homepage"
+  },
+  "invite": {
+    "loading": "Loading invitation…",
+    "notFound": "Invitation not found",
+    "notFoundHint": "This link doesn't match any invitation. Double-check the URL or ask the person who invited you to send a fresh one.",
+    "staleTitle": "Invitation {status}",
+    "staleMessage": "This invitation is {status} and can no longer be used. Please ask {tenant} for a fresh invitation.",
+    "goToSignIn": "Go to sign-in",
+    "welcomeTitle": "Welcome to {tenant}",
+    "roleDescription": "You've been invited to join as a {role}. Set a password to get started.",
+    "emailLabel": "Email",
+    "nameLabel": "Your name (optional)",
+    "namePlaceholder": "How should we address you?",
+    "passwordLabel": "Password",
+    "passwordPlaceholder": "At least 8 characters",
+    "confirmLabel": "Confirm password",
+    "passwordTooShort": "Password must be at least 8 characters.",
+    "passwordMismatch": "Passwords don't match.",
+    "alreadyAccepted": "This invitation has already been accepted. Please sign in with the password you set the first time.",
+    "submit": "Accept invitation",
+    "submitting": "Setting up…",
+    "expiresAt": "Invitation expires {date}."
+  },
+  "globalEvents": {
+    "title": "Upcoming Events",
+    "subtitle": "Public events from bowling clubs across the platform",
+    "noEvents": "No upcoming public events at the moment.",
+    "browseClubs": "Browse clubs",
+    "loading": "Loading events…",
+    "registerCta": "Want to get involved?",
+    "registerNow": "Register Now"
+  },
+  "tenantPicker": {
+    "reasonLabel": "Reason (optional)",
+    "reasonPlaceholder": "e.g. Investigating booking issue #1234",
+    "reasonHint": "Recorded against the impersonation log for audit purposes.",
+    "clubs": "Clubs",
+    "starting": "Starting impersonation…",
+    "helpDrive": "Help drive the wizard for {name}",
+    "actAs": "Act as TENANT_ADMIN of {name}"
+  },
+  "contact": {
+    "address": "Address:",
+    "email": "Email:",
+    "phone": "Phone:"
+  }
+}

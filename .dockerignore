@@ -1,0 +1,20 @@
+# Build context excludes — keeps the image slim and forces next.config to use
+# the APP_VERSION build arg (no .git in the image) instead of `git rev-parse`.
+node_modules
+.next
+.git
+.gitignore
+coverage
+*.log
+npm-debug.log*
+.DS_Store
+.vscode
+.idea
+
+# Never bake secrets into an image — runtime env comes from compose.
+.env
+.env.*
+
+# Test + tooling output not needed at build/runtime.
+jest.config.cjs
+jest.setup.env.cjs

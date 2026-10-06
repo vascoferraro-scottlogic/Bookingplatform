@@ -1,0 +1,9 @@
+Hi {{contactName}},
+
+Good news — your application for {{clubName}} has been approved. We've created your club's space on BookingPlatform.
+
+You'll receive a separate invitation email shortly with a link to set your password and start setting up the club.
+
+{{decisionNotesBlock}}
+
+— The BookingPlatform team

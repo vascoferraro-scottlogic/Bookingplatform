@@ -1,0 +1,58 @@
+{
+  "title": "Messaging",
+  "disabled": "Messaging is not enabled for your club. Contact your administrator.",
+  "selectChannel": "Select a channel to start messaging",
+  "directMessage": "Direct Message",
+  "channelHeader": {
+    "publicChannel": "Public Channel",
+    "privateChannel": "Private Channel",
+    "group": "Group",
+    "directMessage": "Direct Message",
+    "memberCount": "{count} member{count, plural, one {} other {s}}",
+    "manageMembers": "Manage Members"
+  },
+  "channelList": {
+    "title": "Channels",
+    "newChannel": "+ New",
+    "public": "Public",
+    "private": "Private",
+    "groups": "Groups",
+    "directMessages": "Direct Messages"
+  },
+  "messageInput": {
+    "placeholder": "Type a message…",
+    "send": "Send",
+    "mutedUntil": "You are muted until {dateTime}"
+  },
+  "messageThread": {
+    "loadOlder": "Load older messages…",
+    "deleted": "[message deleted]",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "delete": "Delete"
+  },
+  "createChannel": {
+    "title": "Create Channel",
+    "name": "Name",
+    "namePlaceholder": "general",
+    "type": "Type",
+    "typePublic": "Public — anyone can join",
+    "typePrivate": "Private — invite only",
+    "typeGroup": "Group — invite only, named group",
+    "description": "Description (optional)",
+    "descriptionPlaceholder": "What's this channel about?",
+    "addMembers": "Add Members",
+    "cancel": "Cancel",
+    "create": "Create"
+  },
+  "memberManager": {
+    "title": "Members ({count})",
+    "muted": "Muted",
+    "unmute": "Unmute",
+    "mute24h": "Mute 24h",
+    "remove": "Remove",
+    "addMember": "Add Member",
+    "selectUser": "Select a user…",
+    "add": "Add"
+  }
+}

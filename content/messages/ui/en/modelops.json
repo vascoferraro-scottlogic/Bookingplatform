@@ -1,0 +1,87 @@
+{
+  "title": "Model Health",
+  "loading": "Loading model health…",
+  "failed": "Failed to load model health data.",
+  "sidecar": {
+    "online": "ML Sidecar online",
+    "offline": "ML Sidecar offline",
+    "modelLoaded": "Model loaded",
+    "noModel": "No model loaded"
+  },
+  "activeModel": {
+    "title": "Active Model",
+    "noActive": "No active model. Run a training job to create one.",
+    "version": "Version",
+    "trainedAt": "Trained",
+    "rocAuc": "ROC-AUC",
+    "f1": "F1",
+    "recall": "Recall",
+    "precision": "Precision",
+    "threshold": "Threshold",
+    "rows": "Training rows",
+    "labelRate": "No-show rate"
+  },
+  "drift": {
+    "title": "Drift Status",
+    "noChecks": "No drift checks run yet.",
+    "lastCheck": "Last check",
+    "status": {
+      "HEALTHY": "Healthy",
+      "WARN": "Warning",
+      "DRIFT": "Drift detected"
+    },
+    "runCheck": "Run drift check",
+    "running": "Running…",
+    "rocAuc": "Windowed ROC-AUC",
+    "ece": "Calibration error (ECE)",
+    "positiveRate": "Actual no-show rate",
+    "samples": "Samples",
+    "delta": "Delta vs training"
+  },
+  "features": {
+    "title": "Feature Registry",
+    "key": "Key",
+    "label": "Feature",
+    "kind": "Kind",
+    "status": "Status",
+    "enroll": "Enroll",
+    "retire": "Retire",
+    "enrolledAt": "Enrolled",
+    "retiredAt": "Retired",
+    "statusValues": {
+      "AVAILABLE": "Available",
+      "ENROLLED": "Enrolled",
+      "RETIRED": "Retired"
+    },
+    "summary": "{enrolled} enrolled, {available} available, {retired} retired"
+  },
+  "history": {
+    "title": "Version History",
+    "version": "Version",
+    "status": "Status",
+    "rocAuc": "ROC-AUC",
+    "f1": "F1",
+    "trainedAt": "Trained",
+    "promotedAt": "Promoted",
+    "statusValues": {
+      "TRAINING": "Training",
+      "TRAINED": "Trained",
+      "ACTIVE": "Active",
+      "ARCHIVED": "Archived",
+      "REJECTED": "Rejected",
+      "FAILED": "Failed"
+    }
+  },
+  "importance": {
+    "title": "Feature Importance",
+    "noData": "No coefficient data available for this version.",
+    "feature": "Feature",
+    "coefficient": "Coefficient"
+  },
+  "retrain": {
+    "button": "Retrain model",
+    "running": "Training…",
+    "success": "Training complete. Version {version} — {outcome}.",
+    "failed": "Training failed."
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "plans": {
+    "title": "Plans",
+    "backToBilling": "← Back to billing",
+    "loadingPlans": "Loading plans…",
+    "perMonth": "/mo",
+    "freeTrial": "{days}-day free trial",
+    "membersLabel": "Members",
+    "greensLabel": "Greens",
+    "streamingLabel": "Streaming",
+    "unlimited": "Unlimited",
+    "contactAdmin": "Contact platform admin to change plan",
+    "noPlans": "No plans available.",
+    "tierNone": "Not included",
+    "tierBronze": "Bronze",
+    "tierSilver": "Silver",
+    "tierGold": "Gold"
+  },
+  "tenantBilling": {
+    "title": "Tenant Billing",
+    "backToTenant": "← Back to tenant",
+    "loadingBilling": "Loading billing…",
+    "monthly": "Monthly",
+    "method": "Method",
+    "periodEnd": "Period End",
+    "trialEnds": "Trial Ends",
+    "noBillingProfile": "No billing profile.",
+    "totalRevenue": "Total Revenue",
+    "outstanding": "Outstanding",
+    "generateInvoice": "Generate Invoice",
+    "paymentHistory": "Payment History",
+    "ref": "Ref",
+    "amount": "Amount",
+    "status": "Status",
+    "period": "Period",
+    "date": "Date",
+    "noPayments": "No payments yet"
+  },
+  "title": "Billing",
+  "loading": "Loading billing…",
+  "noProfile": "No billing profile found. Contact platform admin.",
+  "plan": {
+    "comparePlans": "Compare Plans",
+    "maxMembers": "Max Members",
+    "maxGreens": "Max Greens",
+    "streaming": "Streaming",
+    "payment": "Payment",
+    "perMonth": "/month",
+    "nextBilling": "Next billing:",
+    "trialEnds": "Trial ends:"
+  },
+  "contact": {
+    "title": "Billing Contact",
+    "contactName": "Contact Name",
+    "contactEmail": "Contact Email",
+    "vatNumber": "VAT Number",
+    "save": "Save",
+    "saved": "Saved",
+    "saveFailed": "Save failed"
+  },
+  "invoices": {
+    "title": "Invoices",
+    "ref": "Ref",
+    "amount": "Amount",
+    "status": "Status",
+    "period": "Period",
+    "date": "Date",
+    "noInvoices": "No invoices yet",
+    "csv": "CSV"
+  },
+  "charts": {
+    "revenueTrend": "Revenue Trend (12 months)",
+    "monthlyChurn": "Monthly Churn",
+    "mrrByPlan": "MRR by Plan"
+  }
+}

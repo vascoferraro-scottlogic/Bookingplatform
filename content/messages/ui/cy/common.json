@@ -1,0 +1,176 @@
+{
+  "nav": {
+    "bookings": "[cy] Bookings",
+    "notifications": "[cy] Notifications",
+    "maintenance": "[cy] Maintenance",
+    "content": "[cy] Content",
+    "streaming": "[cy] Streaming",
+    "admin": "[cy] Admin",
+    "events": "[cy] Events",
+    "messaging": "[cy] Messaging",
+    "settings": "[cy] Settings",
+    "help": "[cy] Help",
+    "signOut": "[cy] Sign Out",
+    "dashboard": "[cy] Dashboard"
+  },
+  "actions": {
+    "save": "[cy] Save",
+    "cancel": "[cy] Cancel",
+    "delete": "[cy] Delete",
+    "edit": "[cy] Edit",
+    "create": "[cy] Create",
+    "confirm": "[cy] Confirm",
+    "back": "[cy] Back",
+    "next": "[cy] Next",
+    "close": "[cy] Close",
+    "loading": "[cy] Loading…",
+    "submit": "[cy] Submit",
+    "search": "[cy] Search",
+    "retry": "[cy] Retry",
+    "markAllRead": "[cy] Mark all read"
+  },
+  "status": {
+    "active": "[cy] Active",
+    "inactive": "[cy] Inactive",
+    "pending": "[cy] Pending",
+    "approved": "[cy] Approved",
+    "rejected": "[cy] Rejected",
+    "cancelled": "[cy] Cancelled",
+    "confirmed": "[cy] Confirmed"
+  },
+  "errors": {
+    "generic": "[cy] Something went wrong. Please try again.",
+    "networkError": "[cy] Network error. Please check your connection.",
+    "notFound": "[cy] Not found.",
+    "unauthorized": "[cy] You are not authorised to perform this action."
+  },
+  "empty": {
+    "noResults": "[cy] No results found.",
+    "noNotifications": "[cy] No notifications.",
+    "noBookings": "[cy] No bookings."
+  },
+  "impersonation": {
+    "actingAs": "[cy] {name} — acting as {role} of {tenant}",
+    "exit": "[cy] Exit impersonation",
+    "exiting": "[cy] Exiting…",
+    "exitFailed": "[cy] Could not end impersonation.",
+    "networkError": "[cy] Network error ending impersonation.",
+    "staleSession": "[cy] A previous impersonation session has ended. Pick a club to start a new one."
+  },
+  "notifications": {
+    "title": "[cy] Notifications",
+    "allRead": "[cy] All notifications marked as read."
+  },
+  "platformDashboard": {
+    "title": "[cy] Platform Dashboard",
+    "welcome": "[cy] Welcome, {name}. Pick a club to act on its behalf. Your real identity is preserved in every audit log entry."
+  },
+  "home": {
+    "title": "[cy] Club Management Platform",
+    "subtitle": "[cy] Multi-tenant bowling club platform",
+    "goToDashboard": "[cy] Go to Dashboard",
+    "signIn": "[cy] Sign In",
+    "register": "[cy] Register",
+    "addYourClub": "[cy] Add your club",
+    "browseClubs": "[cy] Browse Clubs",
+    "upcomingEvents": "[cy] Upcoming Events",
+    "viewAll": "[cy] View all →"
+  },
+  "club": {
+    "comingSoon": "[cy] We're still setting things up. {name} isn't open to members just yet — please check back once the club admin finishes onboarding.",
+    "upcomingEvents": "[cy] Upcoming Events",
+    "checkAvailability": "[cy] Check Availability",
+    "joinTitle": "[cy] Join {name}",
+    "joinSubtitle": "[cy] Become a member to book rinks, enter events, and more.",
+    "backToClub": "[cy] ← Back to {name}",
+    "availabilityTitle": "[cy] Availability — {name}"
+  },
+  "availability": {
+    "loading": "[cy] Loading availability…",
+    "notAvailable": "[cy] Availability is not available for this club.",
+    "backToClub": "[cy] Back to club page",
+    "wantToBook": "[cy] Want to book a rink?",
+    "registerToBook": "[cy] Register to Book"
+  },
+  "quickBook": {
+    "title": "[cy] Book a Rink",
+    "subtitle": "[cy] Check availability and reserve your spot.",
+    "bookNow": "[cy] Book Now"
+  },
+  "upcomingBookings": {
+    "title": "[cy] Upcoming Bookings",
+    "viewAll": "[cy] View all →",
+    "noUpcoming": "[cy] No upcoming bookings."
+  },
+  "tenantSwitcher": {
+    "label": "[cy] Acting at:"
+  },
+  "join": {
+    "title": "[cy] Add your club to BookingPlatform",
+    "subtitle": "[cy] Tell us a wee bit about your club and we'll get you set up.",
+    "backToHomepage": "[cy] ← Back to homepage",
+    "clubName": "[cy] Club name",
+    "clubNamePlaceholder": "[cy] e.g. Anyburgh Bowling Club",
+    "yourName": "[cy] Your name",
+    "email": "[cy] Email",
+    "phone": "[cy] Phone (optional)",
+    "country": "[cy] Country",
+    "countryPlaceholder": "[cy] Choose a country…",
+    "region": "[cy] Region or county (optional)",
+    "regionPlaceholder": "[cy] e.g. East Lothian, Auckland, NSW",
+    "notes": "[cy] Anything else we should know? (optional)",
+    "notesPlaceholder": "[cy] Number of greens, current website, anything that'll help us help you…",
+    "termsLabel": "[cy] I confirm I'm authorised to apply on behalf of this club and agree to be contacted by the BookingPlatform team about this application.",
+    "termsRequired": "[cy] Please agree to the terms before submitting.",
+    "submit": "[cy] Send application",
+    "submitting": "[cy] Sending…",
+    "receivedTitle": "[cy] Application received",
+    "receivedMessage": "[cy] Thanks for your interest in BookingPlatform. We've sent a confirmation to {email} and our team will be in touch within a few working days.",
+    "backToHomepageButton": "[cy] Back to homepage"
+  },
+  "invite": {
+    "loading": "[cy] Loading invitation…",
+    "notFound": "[cy] Invitation not found",
+    "notFoundHint": "[cy] This link doesn't match any invitation. Double-check the URL or ask the person who invited you to send a fresh one.",
+    "staleTitle": "[cy] Invitation {status}",
+    "staleMessage": "[cy] This invitation is {status} and can no longer be used. Please ask {tenant} for a fresh invitation.",
+    "goToSignIn": "[cy] Go to sign-in",
+    "welcomeTitle": "[cy] Welcome to {tenant}",
+    "roleDescription": "[cy] You've been invited to join as a {role}. Set a password to get started.",
+    "emailLabel": "[cy] Email",
+    "nameLabel": "[cy] Your name (optional)",
+    "namePlaceholder": "[cy] How should we address you?",
+    "passwordLabel": "[cy] Password",
+    "passwordPlaceholder": "[cy] At least 8 characters",
+    "confirmLabel": "[cy] Confirm password",
+    "passwordTooShort": "[cy] Password must be at least 8 characters.",
+    "passwordMismatch": "[cy] Passwords don't match.",
+    "alreadyAccepted": "[cy] This invitation has already been accepted. Please sign in with the password you set the first time.",
+    "submit": "[cy] Accept invitation",
+    "submitting": "[cy] Setting up…",
+    "expiresAt": "[cy] Invitation expires {date}."
+  },
+  "globalEvents": {
+    "title": "[cy] Upcoming Events",
+    "subtitle": "[cy] Public events from bowling clubs across the platform",
+    "noEvents": "[cy] No upcoming public events at the moment.",
+    "browseClubs": "[cy] Browse clubs",
+    "loading": "[cy] Loading events…",
+    "registerCta": "[cy] Want to get involved?",
+    "registerNow": "[cy] Register Now"
+  },
+  "tenantPicker": {
+    "reasonLabel": "[cy] Reason (optional)",
+    "reasonPlaceholder": "[cy] e.g. Investigating booking issue #1234",
+    "reasonHint": "[cy] Recorded against the impersonation log for audit purposes.",
+    "clubs": "[cy] Clubs",
+    "starting": "[cy] Starting impersonation…",
+    "helpDrive": "[cy] Help drive the wizard for {name}",
+    "actAs": "[cy] Act as TENANT_ADMIN of {name}"
+  },
+  "contact": {
+    "address": "[cy] Address:",
+    "email": "[cy] Email:",
+    "phone": "[cy] Phone:"
+  }
+}

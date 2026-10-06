@@ -1,0 +1,58 @@
+{
+  "title": "[cy] Messaging",
+  "disabled": "[cy] Messaging is not enabled for your club. Contact your administrator.",
+  "selectChannel": "[cy] Select a channel to start messaging",
+  "directMessage": "[cy] Direct Message",
+  "channelHeader": {
+    "publicChannel": "[cy] Public Channel",
+    "privateChannel": "[cy] Private Channel",
+    "group": "[cy] Group",
+    "directMessage": "[cy] Direct Message",
+    "memberCount": "[cy] {count} member{count, plural, one {} other {s}}",
+    "manageMembers": "[cy] Manage Members"
+  },
+  "channelList": {
+    "title": "[cy] Channels",
+    "newChannel": "[cy] + New",
+    "public": "[cy] Public",
+    "private": "[cy] Private",
+    "groups": "[cy] Groups",
+    "directMessages": "[cy] Direct Messages"
+  },
+  "messageInput": {
+    "placeholder": "[cy] Type a message…",
+    "send": "[cy] Send",
+    "mutedUntil": "[cy] You are muted until {dateTime}"
+  },
+  "messageThread": {
+    "loadOlder": "[cy] Load older messages…",
+    "deleted": "[cy] [message deleted]",
+    "pin": "[cy] Pin",
+    "unpin": "[cy] Unpin",
+    "delete": "[cy] Delete"
+  },
+  "createChannel": {
+    "title": "[cy] Create Channel",
+    "name": "[cy] Name",
+    "namePlaceholder": "[cy] general",
+    "type": "[cy] Type",
+    "typePublic": "[cy] Public — anyone can join",
+    "typePrivate": "[cy] Private — invite only",
+    "typeGroup": "[cy] Group — invite only, named group",
+    "description": "[cy] Description (optional)",
+    "descriptionPlaceholder": "[cy] What's this channel about?",
+    "addMembers": "[cy] Add Members",
+    "cancel": "[cy] Cancel",
+    "create": "[cy] Create"
+  },
+  "memberManager": {
+    "title": "[cy] Members ({count})",
+    "muted": "[cy] Muted",
+    "unmute": "[cy] Unmute",
+    "mute24h": "[cy] Mute 24h",
+    "remove": "[cy] Remove",
+    "addMember": "[cy] Add Member",
+    "selectUser": "[cy] Select a user…",
+    "add": "[cy] Add"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "plans": {
+    "title": "[cy] Plans",
+    "backToBilling": "[cy] ← Back to billing",
+    "loadingPlans": "[cy] Loading plans…",
+    "perMonth": "[cy] /mo",
+    "freeTrial": "[cy] {days}-day free trial",
+    "membersLabel": "[cy] Members",
+    "greensLabel": "[cy] Greens",
+    "streamingLabel": "[cy] Streaming",
+    "unlimited": "[cy] Unlimited",
+    "contactAdmin": "[cy] Contact platform admin to change plan",
+    "noPlans": "[cy] No plans available.",
+    "tierNone": "[cy] Not included",
+    "tierBronze": "[cy] Bronze",
+    "tierSilver": "[cy] Silver",
+    "tierGold": "[cy] Gold"
+  },
+  "tenantBilling": {
+    "title": "[cy] Tenant Billing",
+    "backToTenant": "[cy] ← Back to tenant",
+    "loadingBilling": "[cy] Loading billing…",
+    "monthly": "[cy] Monthly",
+    "method": "[cy] Method",
+    "periodEnd": "[cy] Period End",
+    "trialEnds": "[cy] Trial Ends",
+    "noBillingProfile": "[cy] No billing profile.",
+    "totalRevenue": "[cy] Total Revenue",
+    "outstanding": "[cy] Outstanding",
+    "generateInvoice": "[cy] Generate Invoice",
+    "paymentHistory": "[cy] Payment History",
+    "ref": "[cy] Ref",
+    "amount": "[cy] Amount",
+    "status": "[cy] Status",
+    "period": "[cy] Period",
+    "date": "[cy] Date",
+    "noPayments": "[cy] No payments yet"
+  }
+}

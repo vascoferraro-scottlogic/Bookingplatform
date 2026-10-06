@@ -1,0 +1,51 @@
+{
+  "title": "Bookings",
+  "availability": "Availability",
+  "allBookings": "All Bookings",
+  "myBookings": "My Bookings",
+  "noBookings": "No bookings yet.",
+  "selectTenant": "Select a tenant above to view availability and bookings.",
+  "statusUpdated": "Booking {status} successfully.",
+  "modal": {
+    "bookRink": "Book {rink}",
+    "timeSlot": "Time Slot",
+    "selectTime": "— Select a time —",
+    "playerName": "Player Name (optional)",
+    "playerNamePlaceholder": "Your name",
+    "bookFor": "Book for",
+    "myself": "Myself",
+    "adminOverride": "Admin Override",
+    "overridePlaceholder": "Reason for override (required)",
+    "booking": "Booking…",
+    "requestBooking": "Request Booking",
+    "bookedFor": "Booking requested for {target} successfully!"
+  },
+  "actions": {
+    "approve": "Approve",
+    "reject": "Reject",
+    "sendToPayment": "Send to Payment",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "markNoShow": "Mark no-show",
+    "pay": "Pay £{amount}"
+  },
+  "labels": {
+    "bookedBy": "Booked by {name}",
+    "override": "Override",
+    "tenant": "Tenant:",
+    "selectClub": "— Select a club —"
+  },
+  "grid": {
+    "time": "Time",
+    "booked": "Booked",
+    "open": "Open",
+    "closedForSeason": "Closed for season",
+    "nextSeason": "Next season: {start} – {end}",
+    "allWeather": "All weather",
+    "season": "Season: {start} – {end}",
+    "noGreens": "No greens configured for this club."
+  },
+  "weather": {
+    "hourlyForecast": "Hourly forecast"
+  }
+}

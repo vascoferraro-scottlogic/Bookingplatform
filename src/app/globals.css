@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* Common button utilities */
+.btn {
+	@apply inline-flex items-center justify-center gap-2 rounded font-semibold;
+}
+
+.btn-ai {
+	/* High-contrast, large, block-style AI action button */
+	@apply relative z-10 bg-purple-900 text-white border-4 border-yellow-300 shadow-md focus:outline-none;
+}
+
+.btn-ai--large {
+	@apply block w-full text-xl py-3.5 px-4; /* larger, block-level for prominence */
+}
+
+.btn-ai__icon {
+	@apply text-2xl mr-2;
+}
+
+.btn-approve {
+	@apply bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700 disabled:opacity-50;
+}
+
+.btn-reject {
+	@apply bg-red-600 text-white px-3 py-1 rounded text-xs hover:bg-red-700 disabled:opacity-50;
+}

@@ -1,0 +1,25 @@
+.env
+node_modules/
+.next/
+prisma/dev.db
+prisma/dev.db-journal
+dev.db
+dev.db-journal
+coverage/
+next-env.d.ts
+
+# build artefacts
+tsconfig.tsbuildinfo
+
+# local-only workshop facilitator notes
+.cache-loader/
+
+seed-npm.log
+
+# ML sidecar — Python cache and generated artifacts. The baseline model ships
+# inside the image and a clean clone needs it, so it's force-kept; retrained or
+# experimental artifacts and training metrics stay ignored.
+ml/artifacts/*
+!ml/artifacts/noshow-v1.joblib
+ml/**/__pycache__/
+ml/**/*.pyc

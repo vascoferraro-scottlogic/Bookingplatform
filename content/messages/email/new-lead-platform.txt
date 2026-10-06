@@ -1,0 +1,10 @@
+A new club has applied to join the platform.
+
+Club: {{clubName}}
+Contact: {{contactName}} <{{contactEmail}}>
+Country / region: {{country}}{{regionSuffix}}
+
+Notes from the applicant:
+{{notes}}
+
+Review in queue: {{queueUrl}}

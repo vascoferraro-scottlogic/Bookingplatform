@@ -1,0 +1,51 @@
+{
+  "title": "[cy] Bookings",
+  "availability": "[cy] Availability",
+  "allBookings": "[cy] All Bookings",
+  "myBookings": "[cy] My Bookings",
+  "noBookings": "[cy] No bookings yet.",
+  "selectTenant": "[cy] Select a tenant above to view availability and bookings.",
+  "statusUpdated": "[cy] Booking {status} successfully.",
+  "modal": {
+    "bookRink": "[cy] Book {rink}",
+    "timeSlot": "[cy] Time Slot",
+    "selectTime": "[cy] — Select a time —",
+    "playerName": "[cy] Player Name (optional)",
+    "playerNamePlaceholder": "[cy] Your name",
+    "bookFor": "[cy] Book for",
+    "myself": "[cy] Myself",
+    "adminOverride": "[cy] Admin Override",
+    "overridePlaceholder": "[cy] Reason for override (required)",
+    "booking": "[cy] Booking…",
+    "requestBooking": "[cy] Request Booking",
+    "bookedFor": "[cy] Booking requested for {target} successfully!"
+  },
+  "actions": {
+    "approve": "[cy] Approve",
+    "reject": "[cy] Reject",
+    "sendToPayment": "[cy] Send to Payment",
+    "confirm": "[cy] Confirm",
+    "cancel": "[cy] Cancel",
+    "markNoShow": "[cy] Mark no-show",
+    "pay": "[cy] Pay £{amount}"
+  },
+  "labels": {
+    "bookedBy": "[cy] Booked by {name}",
+    "override": "[cy] Override",
+    "tenant": "[cy] Tenant:",
+    "selectClub": "[cy] — Select a club —"
+  },
+  "grid": {
+    "time": "[cy] Time",
+    "booked": "[cy] Booked",
+    "open": "[cy] Open",
+    "closedForSeason": "[cy] Closed for season",
+    "nextSeason": "[cy] Next season: {start} – {end}",
+    "allWeather": "[cy] All weather",
+    "season": "[cy] Season: {start} – {end}",
+    "noGreens": "[cy] No greens configured for this club."
+  },
+  "weather": {
+    "hourlyForecast": "[cy] Hourly forecast"
+  }
+}

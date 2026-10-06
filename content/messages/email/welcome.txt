@@ -1,0 +1,8 @@
+Welcome to BookingPlatform, {{name}}!
+
+Your account at {{clubName}} is now active. Sign in any time at:
+{{loginUrl}}
+
+Next up: take a few minutes to set the club's basics — opening hours, greens, members. We'll guide you through it.
+
+— The BookingPlatform team

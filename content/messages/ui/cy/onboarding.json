@@ -1,0 +1,24 @@
+{
+  "loading": "[cy] Loading…",
+  "previewBanner": "[cy] Preview only — not yet published.",
+  "previewBannerHint": "[cy] Members can't see your organisation until you press Go live in the final chapter.",
+  "header": "[cy] Setting up your organisation",
+  "saveAndExit": "[cy] Save & exit",
+  "chapters": {
+    "about": "[cy] About your organisation",
+    "organisation": "[cy] Your organisation",
+    "where": "[cy] Where you are",
+    "hours": "[cy] When you're open",
+    "greens": "[cy] Your greens",
+    "people": "[cy] Your people",
+    "knowledge": "[cy] What the agents should know",
+    "features": "[cy] What you want enabled",
+    "subscription": "[cy] Subscription",
+    "review": "[cy] Review & Go live"
+  },
+  "shared": {
+    "saveAndContinue": "[cy] Save and continue",
+    "saving": "[cy] Saving…",
+    "skipForNow": "[cy] Skip for now"
+  }
+}

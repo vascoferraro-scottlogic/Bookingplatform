@@ -1,0 +1,52 @@
+{
+  "title": "Cynnal a Chadw",
+  "selectTenant": "Dewiswch denant uchod i weld tasgau cynnal a chadw.",
+  "submitForm": {
+    "heading": "Cyflwyno Tasg",
+    "titlePlaceholder": "Teitl",
+    "descriptionPlaceholder": "Disgrifiad",
+    "submit": "Cyflwyno",
+    "titleRequired": "Mae teitl yn ofynnol",
+    "descriptionRequired": "Mae disgrifiad yn ofynnol",
+    "submitFailed": "Methu â chyflwyno'r dasg",
+    "submitted": "Tasg wedi'i chyflwyno'n llwyddiannus!"
+  },
+  "status": {
+    "updated": "Statws tasg wedi'i ddiweddaru i {status}.",
+    "updateFailed": "Methu â diweddaru statws y dasg"
+  },
+  "notes": {
+    "added": "Nodyn wedi'i ychwanegu.",
+    "addFailed": "Methu ag ychwanegu nodyn"
+  },
+  "categories": {
+    "GENERAL": "Cyffredinol",
+    "RINK_SURFACE": "Wyneb y Rinc",
+    "EQUIPMENT": "Offer",
+    "FACILITIES": "Cyfleusterau",
+    "SAFETY": "Diogelwch",
+    "GROUNDS": "Tiroedd",
+    "OTHER": "Arall"
+  },
+  "priorities": {
+    "LOW": "Isel",
+    "MEDIUM": "Canolig",
+    "HIGH": "Uchel",
+    "URGENT": "Brys"
+  },
+  "transitions": {
+    "Assign": "Neilltuo",
+    "Start Work": "Dechrau Gwaith",
+    "Close": "Cau",
+    "Reopen": "Ailagor",
+    "Reassign": "Ailneilltuo"
+  },
+  "labels": {
+    "tenant": "Tenant:",
+    "selectClub": "— Dewiswch glwb —",
+    "submittedBy": "Cyflwynwyd gan {name}",
+    "assignedTo": "Wedi'i neilltuo i {name}",
+    "agentTimeline": "Llinell Amser yr Asiant",
+    "noTasks": "Dim tasgau cynnal a chadw."
+  }
+}

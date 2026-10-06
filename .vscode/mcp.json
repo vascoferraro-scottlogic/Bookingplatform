@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "github": {
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/.vscode/start-github-mcp.ps1"]
+    }
+  }
+}

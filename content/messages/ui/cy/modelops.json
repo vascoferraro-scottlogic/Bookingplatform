@@ -1,0 +1,87 @@
+{
+  "title": "[cy] Model Health",
+  "loading": "[cy] Loading model health…",
+  "failed": "[cy] Failed to load model health data.",
+  "sidecar": {
+    "online": "[cy] ML Sidecar online",
+    "offline": "[cy] ML Sidecar offline",
+    "modelLoaded": "[cy] Model loaded",
+    "noModel": "[cy] No model loaded"
+  },
+  "activeModel": {
+    "title": "[cy] Active Model",
+    "noActive": "[cy] No active model. Run a training job to create one.",
+    "version": "[cy] Version",
+    "trainedAt": "[cy] Trained",
+    "rocAuc": "[cy] ROC-AUC",
+    "f1": "[cy] F1",
+    "recall": "[cy] Recall",
+    "precision": "[cy] Precision",
+    "threshold": "[cy] Threshold",
+    "rows": "[cy] Training rows",
+    "labelRate": "[cy] No-show rate"
+  },
+  "drift": {
+    "title": "[cy] Drift Status",
+    "noChecks": "[cy] No drift checks run yet.",
+    "lastCheck": "[cy] Last check",
+    "status": {
+      "HEALTHY": "[cy] Healthy",
+      "WARN": "[cy] Warning",
+      "DRIFT": "[cy] Drift detected"
+    },
+    "runCheck": "[cy] Run drift check",
+    "running": "[cy] Running…",
+    "rocAuc": "[cy] Windowed ROC-AUC",
+    "ece": "[cy] Calibration error (ECE)",
+    "positiveRate": "[cy] Actual no-show rate",
+    "samples": "[cy] Samples",
+    "delta": "[cy] Delta vs training"
+  },
+  "features": {
+    "title": "[cy] Feature Registry",
+    "key": "[cy] Key",
+    "label": "[cy] Feature",
+    "kind": "[cy] Kind",
+    "status": "[cy] Status",
+    "enroll": "[cy] Enroll",
+    "retire": "[cy] Retire",
+    "enrolledAt": "[cy] Enrolled",
+    "retiredAt": "[cy] Retired",
+    "statusValues": {
+      "AVAILABLE": "[cy] Available",
+      "ENROLLED": "[cy] Enrolled",
+      "RETIRED": "[cy] Retired"
+    },
+    "summary": "[cy] {enrolled} enrolled, {available} available, {retired} retired"
+  },
+  "history": {
+    "title": "[cy] Version History",
+    "version": "[cy] Version",
+    "status": "[cy] Status",
+    "rocAuc": "[cy] ROC-AUC",
+    "f1": "[cy] F1",
+    "trainedAt": "[cy] Trained",
+    "promotedAt": "[cy] Promoted",
+    "statusValues": {
+      "TRAINING": "[cy] Training",
+      "TRAINED": "[cy] Trained",
+      "ACTIVE": "[cy] Active",
+      "ARCHIVED": "[cy] Archived",
+      "REJECTED": "[cy] Rejected",
+      "FAILED": "[cy] Failed"
+    }
+  },
+  "importance": {
+    "title": "[cy] Feature Importance",
+    "noData": "[cy] No coefficient data available for this version.",
+    "feature": "[cy] Feature",
+    "coefficient": "[cy] Coefficient"
+  },
+  "retrain": {
+    "button": "[cy] Retrain model",
+    "running": "[cy] Training…",
+    "success": "[cy] Training complete. Version {version} — {outcome}.",
+    "failed": "[cy] Training failed."
+  }
+}

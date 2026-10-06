@@ -1,0 +1,24 @@
+{
+  "loading": "Loading…",
+  "previewBanner": "Preview only — not yet published.",
+  "previewBannerHint": "Members can't see your organisation until you press Go live in the final chapter.",
+  "header": "Setting up your organisation",
+  "saveAndExit": "Save & exit",
+  "chapters": {
+    "about": "About your organisation",
+    "organisation": "Your organisation",
+    "where": "Where you are",
+    "hours": "When you're open",
+    "greens": "Your greens",
+    "people": "Your people",
+    "knowledge": "What the agents should know",
+    "features": "What you want enabled",
+    "subscription": "Subscription",
+    "review": "Review & Go live"
+  },
+  "shared": {
+    "saveAndContinue": "Save and continue",
+    "saving": "Saving…",
+    "skipForNow": "Skip for now"
+  }
+}

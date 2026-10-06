@@ -1,0 +1,12 @@
+# Caddy router for the local blue/green stack. The single live upstream lives
+# in an imported snippet (caddy/live-upstream.caddy) that bin/swap.mjs rewrites;
+# `caddy reload` then swaps colours gracefully (zero-downtime, SSE reconnects).
+{
+	# Local HTTP only — TLS is terminated upstream (Cloudflare Tunnel locally,
+	# Coolify/Traefik in cloud). The admin API stays on (needed by `reload`).
+	auto_https off
+}
+
+:80 {
+	import /etc/caddy/live-upstream.caddy
+}

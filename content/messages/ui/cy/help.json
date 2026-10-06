@@ -1,0 +1,43 @@
+{
+  "index": {
+    "title": "[cy] Help centre",
+    "subtitle": "[cy] Guides for running your club on the platform.",
+    "searchPlaceholder": "[cy] Search articles…",
+    "searchResultsTitle": "[cy] Search results ({count})",
+    "noResults": "[cy] No articles match \"{query}\"."
+  },
+  "article": {
+    "notFound": "[cy] Article not found.",
+    "backToHelp": "[cy] ← Back to help centre",
+    "loading": "[cy] Loading…",
+    "customised": "[cy] customised by your club",
+    "translationPending": "[cy] translation pending",
+    "platformAdmin": "[cy] platform admin",
+    "lastUpdated": "[cy] Last updated {date}"
+  },
+  "manage": {
+    "title": "[cy] Help overrides",
+    "subtitle": "[cy] Customise the platform's help articles for your club.",
+    "backToHelp": "[cy] ← Back to help centre",
+    "editingSlug": "[cy] Editing '{slug}'",
+    "titleLabel": "[cy] Title",
+    "bodyLabel": "[cy] Body (markdown)",
+    "bodyPlaceholder": "[cy] Leave empty to inherit the shipped body",
+    "visibleLabel": "[cy] Visible to members of this club (uncheck to hide the article entirely)",
+    "saveOverride": "[cy] Save override",
+    "cancel": "[cy] Cancel",
+    "edit": "[cy] Edit",
+    "override": "[cy] Override",
+    "restoreDefault": "[cy] Restore default",
+    "customised": "[cy] customised",
+    "hidden": "[cy] hidden",
+    "flagDisabled": "[cy] Help article overrides are disabled for your club. A platform admin can enable the {flag} feature flag."
+  },
+  "markdown": {
+    "forPlatformAdmins": "[cy] For platform admins",
+    "forClubAdmins": "[cy] For club admins"
+  },
+  "hint": {
+    "label": "[cy] Help"
+  }
+}

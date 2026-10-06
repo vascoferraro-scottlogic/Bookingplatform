@@ -1,0 +1,75 @@
+# Standalone MVP Compose file using prebuilt images from GHCR.
+#
+#   docker compose -f docker-compose.ghcr.yml pull
+#   docker compose -f docker-compose.ghcr.yml up -d
+#
+# Defaults target the canonical publisher. A fork can override these through
+# the repository .env file:
+#   GHCR_OWNER=<your-lowercased-github-owner>
+#   GHCR_TAG=<sha-or-latest>
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-booking}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-bookingplatform}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app-migrate:
+    image: ghcr.io/${GHCR_OWNER:-trimble006}/bookingplatform-migrate:${GHCR_TAG:-latest}
+    restart: "no"
+    command: ["sh", "docker/init.sh"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    image: ghcr.io/${GHCR_OWNER:-trimble006}/bookingplatform-app:${GHCR_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      APP_COLOR: mvp
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:?NEXTAUTH_URL is required}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
+      AGENT_LLM_PROVIDER: stub
+    depends_on:
+      postgres:
+        condition: service_healthy
+      app-migrate:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARED_TUNNEL_TOKEN:?CLOUDFLARED_TUNNEL_TOKEN is required}
+    environment:
+      CLOUDFLARED_TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN:?CLOUDFLARED_TUNNEL_TOKEN is required}
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  pgdata:

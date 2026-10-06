@@ -1,0 +1,43 @@
+{
+  "index": {
+    "title": "Help centre",
+    "subtitle": "Guides for running your club on the platform.",
+    "searchPlaceholder": "Search articles…",
+    "searchResultsTitle": "Search results ({count})",
+    "noResults": "No articles match \"{query}\"."
+  },
+  "article": {
+    "notFound": "Article not found.",
+    "backToHelp": "← Back to help centre",
+    "loading": "Loading…",
+    "customised": "customised by your club",
+    "translationPending": "translation pending",
+    "platformAdmin": "platform admin",
+    "lastUpdated": "Last updated {date}"
+  },
+  "manage": {
+    "title": "Help overrides",
+    "subtitle": "Customise the platform's help articles for your club.",
+    "backToHelp": "← Back to help centre",
+    "editingSlug": "Editing '{slug}'",
+    "titleLabel": "Title",
+    "bodyLabel": "Body (markdown)",
+    "bodyPlaceholder": "Leave empty to inherit the shipped body",
+    "visibleLabel": "Visible to members of this club (uncheck to hide the article entirely)",
+    "saveOverride": "Save override",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "override": "Override",
+    "restoreDefault": "Restore default",
+    "customised": "customised",
+    "hidden": "hidden",
+    "flagDisabled": "Help article overrides are disabled for your club. A platform admin can enable the {flag} feature flag."
+  },
+  "markdown": {
+    "forPlatformAdmins": "For platform admins",
+    "forClubAdmins": "For club admins"
+  },
+  "hint": {
+    "label": "Help"
+  }
+}

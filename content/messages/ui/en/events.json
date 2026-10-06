@@ -1,0 +1,62 @@
+{
+  "title": "Events",
+  "noEvents": "No events yet.",
+  "createEvent": "Create Event",
+  "editEvent": "Edit Event",
+  "selectTenant": "Select a tenant above to manage events.",
+  "form": {
+    "titlePlaceholder": "Event title",
+    "descriptionPlaceholder": "Description",
+    "date": "Date",
+    "startTime": "Start Time",
+    "endTime": "End Time (optional)",
+    "location": "Location",
+    "capacity": "Capacity",
+    "entryFee": "Entry Fee",
+    "currency": "Currency",
+    "imageUrl": "Image URL",
+    "contactName": "Contact Name",
+    "contactEmail": "Contact Email",
+    "contactPhone": "Contact Phone",
+    "visibility": "Visibility",
+    "submit": "Create",
+    "update": "Update"
+  },
+  "categories": {
+    "SOCIAL": "Social",
+    "COMPETITION": "Competition",
+    "LEAGUE": "League",
+    "OPEN_DAY": "Open Day",
+    "TOURNAMENT": "Tournament",
+    "OTHER": "Other"
+  },
+  "formats": {
+    "KNOCKOUT": "Knockout",
+    "AMERICAN": "American",
+    "LEAGUE_FORMAT": "League",
+    "CANADIAN": "Canadian",
+    "OTHER_FORMAT": "Other"
+  },
+  "playerCounts": {
+    "SINGLES": "Singles",
+    "PAIRS": "Pairs",
+    "TRIPLES": "Triples",
+    "FOURS": "Fours"
+  },
+  "visibility": {
+    "MEMBERS_ONLY": "Members Only",
+    "PUBLIC": "Public"
+  },
+  "status": {
+    "DRAFT": "Draft",
+    "PUBLISHED": "Published"
+  },
+  "filters": {
+    "ALL": "All",
+    "DRAFT": "Draft",
+    "PUBLISHED": "Published"
+  },
+  "card": {
+    "capacity": "Capacity: {count}"
+  }
+}

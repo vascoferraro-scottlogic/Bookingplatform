@@ -1,0 +1,1 @@
+{{clubName}}: your booking on {{date}} at {{time}} is confirmed. Reply STOP to opt out.

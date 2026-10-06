@@ -1,0 +1,9 @@
+Hi {{contactName}},
+
+Thanks for getting in touch about {{clubName}}. We've received your application to join BookingPlatform.
+
+Our team will review it and come back to you within a few working days. If we need anything else from you, we'll drop you a note at this address.
+
+In the meantime, feel free to reply to this email with any questions.
+
+— The BookingPlatform team

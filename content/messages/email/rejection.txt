@@ -1,0 +1,9 @@
+Hi {{contactName}},
+
+Thanks for your interest in BookingPlatform. After reviewing your application for {{clubName}}, we've decided not to proceed at this time.
+
+{{decisionNotes}}
+
+If your circumstances change, you're welcome to apply again in future.
+
+— The BookingPlatform team

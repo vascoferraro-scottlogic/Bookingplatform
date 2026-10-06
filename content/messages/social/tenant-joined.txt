@@ -1,0 +1,3 @@
+🎉 Welcome {{clubName}} to BookingPlatform — our newest club from {{country}}! Drop them a hello at {{publicUrl}}
+
+#bowls #BookingPlatform #{{hashtag}}

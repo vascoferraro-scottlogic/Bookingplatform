@@ -1,0 +1,62 @@
+{
+  "title": "[cy] Events",
+  "noEvents": "[cy] No events yet.",
+  "createEvent": "[cy] Create Event",
+  "editEvent": "[cy] Edit Event",
+  "selectTenant": "[cy] Select a tenant above to manage events.",
+  "form": {
+    "titlePlaceholder": "[cy] Event title",
+    "descriptionPlaceholder": "[cy] Description",
+    "date": "[cy] Date",
+    "startTime": "[cy] Start Time",
+    "endTime": "[cy] End Time (optional)",
+    "location": "[cy] Location",
+    "capacity": "[cy] Capacity",
+    "entryFee": "[cy] Entry Fee",
+    "currency": "[cy] Currency",
+    "imageUrl": "[cy] Image URL",
+    "contactName": "[cy] Contact Name",
+    "contactEmail": "[cy] Contact Email",
+    "contactPhone": "[cy] Contact Phone",
+    "visibility": "[cy] Visibility",
+    "submit": "[cy] Create",
+    "update": "[cy] Update"
+  },
+  "categories": {
+    "SOCIAL": "[cy] Social",
+    "COMPETITION": "[cy] Competition",
+    "LEAGUE": "[cy] League",
+    "OPEN_DAY": "[cy] Open Day",
+    "TOURNAMENT": "[cy] Tournament",
+    "OTHER": "[cy] Other"
+  },
+  "formats": {
+    "KNOCKOUT": "[cy] Knockout",
+    "AMERICAN": "[cy] American",
+    "LEAGUE_FORMAT": "[cy] League",
+    "CANADIAN": "[cy] Canadian",
+    "OTHER_FORMAT": "[cy] Other"
+  },
+  "playerCounts": {
+    "SINGLES": "[cy] Singles",
+    "PAIRS": "[cy] Pairs",
+    "TRIPLES": "[cy] Triples",
+    "FOURS": "[cy] Fours"
+  },
+  "visibility": {
+    "MEMBERS_ONLY": "[cy] Members Only",
+    "PUBLIC": "[cy] Public"
+  },
+  "status": {
+    "DRAFT": "[cy] Draft",
+    "PUBLISHED": "[cy] Published"
+  },
+  "filters": {
+    "ALL": "[cy] All",
+    "DRAFT": "[cy] Draft",
+    "PUBLISHED": "[cy] Published"
+  },
+  "card": {
+    "capacity": "[cy] Capacity: {count}"
+  }
+}

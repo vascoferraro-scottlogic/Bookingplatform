@@ -1,0 +1,7 @@
+Hi {{name}},
+
+{{inviterName}} has invited you to join {{clubName}} on BookingPlatform as a {{roleLabel}}.
+
+Visit the link below to set a password and get started. The invitation expires on {{expiresAt}}.
+
+{{acceptUrl}}

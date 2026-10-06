@@ -1,0 +1,66 @@
+{
+  "title": "Business Insights",
+  "noAccess": "You do not have permission to view business insights.",
+  "loading": "Loading insights…",
+  "loadFailed": "Failed to load insights data.",
+  "noData": "No data for this period.",
+  "period": {
+    "7d": "7 days",
+    "30d": "30 days",
+    "90d": "90 days"
+  },
+  "bookings": {
+    "title": "Bookings",
+    "totalBookings": "Total Bookings",
+    "confirmedBookings": "Confirmed",
+    "cancelledBookings": "Cancelled",
+    "cancellationRate": "Cancellation Rate",
+    "bookingsOverTime": "Bookings Over Time",
+    "revenueTrend": "Revenue (£)",
+    "totalRevenue": "Total Revenue",
+    "peakHours": "Peak Hours",
+    "topBookers": "Top Bookers",
+    "name": "Name",
+    "count": "Bookings",
+    "day": "Day",
+    "slot": "Slot",
+    "revenueTooltip": "Revenue",
+    "bookingsTooltip": "Bookings",
+    "noBookings": "No bookings in this period."
+  },
+  "occupancy": {
+    "title": "Occupancy",
+    "rate": "Occupancy Rate",
+    "byGreen": "By Green"
+  },
+  "members": {
+    "title": "Members & Engagement",
+    "totalMembers": "Total Members",
+    "newMembers": "New Members",
+    "activeMembersTitle": "Active Members Over Time",
+    "dormantMembers": "Dormant (90d inactive)",
+    "memberGrowth": "Member Growth",
+    "roleBreakdown": "Members by Role",
+    "activityBreakdown": "Activity Breakdown",
+    "activeBookersLabel": "Active Bookers",
+    "activeMessagersLabel": "Active in Messaging",
+    "topActive": "Most Active Members",
+    "bookingsCol": "Bookings",
+    "messagesCol": "Messages",
+    "totalCol": "Total"
+  },
+  "operations": {
+    "title": "Operations",
+    "taskCompletion": "Task Completion Rate",
+    "avgTimeToClose": "Avg Time to Close",
+    "tasksByCategory": "Tasks by Category",
+    "tasksByPriority": "Tasks by Priority",
+    "totalTasks": "Total Tasks",
+    "eventsByCategory": "Events by Category",
+    "eventsSummary": "Events Summary",
+    "publishedEvents": "Published",
+    "draftEvents": "Draft",
+    "upcomingEvents": "Upcoming Events",
+    "days": "days"
+  }
+}

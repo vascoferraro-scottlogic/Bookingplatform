@@ -1,0 +1,52 @@
+{
+  "title": "Maintenance",
+  "selectTenant": "Select a tenant above to view maintenance tasks.",
+  "submitForm": {
+    "heading": "Submit a Task",
+    "titlePlaceholder": "Title",
+    "descriptionPlaceholder": "Description",
+    "submit": "Submit",
+    "titleRequired": "Title is required",
+    "descriptionRequired": "Description is required",
+    "submitFailed": "Failed to submit task",
+    "submitted": "Task submitted successfully!"
+  },
+  "status": {
+    "updated": "Task status updated to {status}.",
+    "updateFailed": "Failed to update task status"
+  },
+  "notes": {
+    "added": "Note added.",
+    "addFailed": "Failed to add note"
+  },
+  "categories": {
+    "GENERAL": "General",
+    "RINK_SURFACE": "Rink Surface",
+    "EQUIPMENT": "Equipment",
+    "FACILITIES": "Facilities",
+    "SAFETY": "Safety",
+    "GROUNDS": "Grounds",
+    "OTHER": "Other"
+  },
+  "priorities": {
+    "LOW": "Low",
+    "MEDIUM": "Medium",
+    "HIGH": "High",
+    "URGENT": "Urgent"
+  },
+  "transitions": {
+    "Assign": "Assign",
+    "Start Work": "Start Work",
+    "Close": "Close",
+    "Reopen": "Reopen",
+    "Reassign": "Reassign"
+  },
+  "labels": {
+    "tenant": "Tenant:",
+    "selectClub": "— Select a club —",
+    "submittedBy": "Submitted by {name}",
+    "assignedTo": "Assigned to {name}",
+    "agentTimeline": "Agent Timeline",
+    "noTasks": "No maintenance tasks."
+  }
+}

@@ -1,0 +1,84 @@
+name: Build & publish stack images
+
+# Publishes the app and migration images to GHCR so the MVP host can pull
+# prebuilt multi-arch (amd64 + arm64) images instead of building locally.
+#
+# Run it manually before a workshop (Actions tab -> "Build & publish stack
+# images" -> Run workflow), or push a version tag (v*). After the first
+# successful run, make the two packages PUBLIC so hosts pull without
+# logging in:
+#   GitHub profile -> Packages -> bookingplatform-{app,migrate} ->
+#   Package settings -> Change visibility -> Public.
+# (Otherwise testers must `docker login ghcr.io` with a read:packages PAT.)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute lowercased owner + short SHA
+        run: |
+          echo "OWNER_LC=${OWNER,,}" >> "$GITHUB_ENV"
+          echo "SHA_SHORT=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        env:
+          OWNER: ${{ github.repository_owner }}
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # App runtime image.
+      - name: Build & push app (runner)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: runner
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: APP_VERSION=${{ env.SHA_SHORT }}
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/bookingplatform-app:latest
+            ghcr.io/${{ env.OWNER_LC }}/bookingplatform-app:${{ env.SHA_SHORT }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,scope=app,mode=max
+
+      # One-shot migrate/seed image — the fuller "builder" stage (Prisma CLI +
+      # ts-node seed toolchain). Reuses the app build cache.
+      - name: Build & push migrate (builder)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: builder
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: APP_VERSION=${{ env.SHA_SHORT }}
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/bookingplatform-migrate:latest
+            ghcr.io/${{ env.OWNER_LC }}/bookingplatform-migrate:${{ env.SHA_SHORT }}
+          cache-from: type=gha,scope=app
+

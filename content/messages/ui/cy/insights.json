@@ -1,0 +1,66 @@
+{
+  "title": "[cy] Business Insights",
+  "noAccess": "[cy] You do not have permission to view business insights.",
+  "loading": "[cy] Loading insights…",
+  "loadFailed": "[cy] Failed to load insights data.",
+  "noData": "[cy] No data for this period.",
+  "period": {
+    "7d": "[cy] 7 days",
+    "30d": "[cy] 30 days",
+    "90d": "[cy] 90 days"
+  },
+  "bookings": {
+    "title": "[cy] Bookings",
+    "totalBookings": "[cy] Total Bookings",
+    "confirmedBookings": "[cy] Confirmed",
+    "cancelledBookings": "[cy] Cancelled",
+    "cancellationRate": "[cy] Cancellation Rate",
+    "bookingsOverTime": "[cy] Bookings Over Time",
+    "revenueTrend": "[cy] Revenue (£)",
+    "totalRevenue": "[cy] Total Revenue",
+    "peakHours": "[cy] Peak Hours",
+    "topBookers": "[cy] Top Bookers",
+    "name": "[cy] Name",
+    "count": "[cy] Bookings",
+    "day": "[cy] Day",
+    "slot": "[cy] Slot",
+    "revenueTooltip": "[cy] Revenue",
+    "bookingsTooltip": "[cy] Bookings",
+    "noBookings": "[cy] No bookings in this period."
+  },
+  "occupancy": {
+    "title": "[cy] Occupancy",
+    "rate": "[cy] Occupancy Rate",
+    "byGreen": "[cy] By Green"
+  },
+  "members": {
+    "title": "[cy] Members & Engagement",
+    "totalMembers": "[cy] Total Members",
+    "newMembers": "[cy] New Members",
+    "activeMembersTitle": "[cy] Active Members Over Time",
+    "dormantMembers": "[cy] Dormant (90d inactive)",
+    "memberGrowth": "[cy] Member Growth",
+    "roleBreakdown": "[cy] Members by Role",
+    "activityBreakdown": "[cy] Activity Breakdown",
+    "activeBookersLabel": "[cy] Active Bookers",
+    "activeMessagersLabel": "[cy] Active in Messaging",
+    "topActive": "[cy] Most Active Members",
+    "bookingsCol": "[cy] Bookings",
+    "messagesCol": "[cy] Messages",
+    "totalCol": "[cy] Total"
+  },
+  "operations": {
+    "title": "[cy] Operations",
+    "taskCompletion": "[cy] Task Completion Rate",
+    "avgTimeToClose": "[cy] Avg Time to Close",
+    "tasksByCategory": "[cy] Tasks by Category",
+    "tasksByPriority": "[cy] Tasks by Priority",
+    "totalTasks": "[cy] Total Tasks",
+    "eventsByCategory": "[cy] Events by Category",
+    "eventsSummary": "[cy] Events Summary",
+    "publishedEvents": "[cy] Published",
+    "draftEvents": "[cy] Draft",
+    "upcomingEvents": "[cy] Upcoming Events",
+    "days": "[cy] days"
+  }
+}

@@ -1,0 +1,9 @@
+Hi {{contactName}},
+
+Thanks for your application for {{clubName}}. Before we can take it forward, we need a wee bit more information from you:
+
+{{decisionNotes}}
+
+Just reply to this email with the details and we'll pick it back up.
+
+— The BookingPlatform team
