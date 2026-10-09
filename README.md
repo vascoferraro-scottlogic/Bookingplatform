@@ -78,4 +78,4 @@ directly and do not depend on the repository's Compose files.
 The demo credentials are for local development only. Optional integrations
 such as Unleash, ML, and external AI providers are not needed for this setup.
 
-For the minimal AWS hosting plan, see [docs/hosting-aws.md](docs/hosting-aws.md).
+For the AWS hosting (how it is built) see [docs/hosting-aws.md](docs/hosting-aws.md); to run, reset or take it down see [docs/aws-operations.md](docs/aws-operations.md).
