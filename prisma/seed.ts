@@ -31,7 +31,7 @@ async function main() {
       brandColor: "#16a34a",
       locale: "en",
       seasonStart: "2026-04-01",
-      seasonEnd: "2026-09-30",
+      seasonEnd: "2026-12-31",
       openingTime: "09:00",
       closingTime: "18:00",
       latitude: 54.9783,
@@ -88,6 +88,21 @@ async function main() {
       },
     });
   }
+
+  // Demo GreenSeason override: 2026 season extended to year end so the Main
+  // Green is bookable during the autumn training cohort. Seed dates are valid
+  // until 31 Dec 2026 — refresh this and the sample events below after that.
+  await prisma.greenSeason.upsert({
+    where: { greenId_year: { greenId: green.id, year: 2026 } },
+    update: {},
+    create: {
+      greenId: green.id,
+      year: 2026,
+      startDate: "2026-04-01",
+      endDate: "2026-12-31",
+      note: "Extended to year end for autumn/winter play",
+    },
+  });
 
   // Demo GreenSeason override: 2027 season opened early for championship
   await prisma.greenSeason.upsert({
@@ -170,10 +185,10 @@ async function main() {
         data: [
           {
             tenantId: tenant.id,
-            title: "Summer Open Day",
+            title: "Winter Open Day",
             description: "Come and try bowls! Free taster sessions for new players of all ages.",
             category: "OPEN_DAY",
-            date: "2026-06-15",
+            date: "2026-11-14",
             startTime: "10:00",
             endTime: "16:00",
             visibility: "PUBLIC",
@@ -187,7 +202,7 @@ async function main() {
             category: "COMPETITION",
             format: "KNOCKOUT",
             playerCount: "PAIRS",
-            date: "2026-07-12",
+            date: "2026-12-05",
             startTime: "09:00",
             endTime: "17:00",
             capacity: 32,
@@ -203,7 +218,7 @@ async function main() {
             title: "Friday Social Roll-Up",
             description: "Casual Friday afternoon social bowling. All welcome, no need to book.",
             category: "SOCIAL",
-            date: "2026-06-20",
+            date: "2026-11-20",
             startTime: "14:00",
             endTime: "17:00",
             visibility: "MEMBERS_ONLY",

@@ -75,6 +75,15 @@ directly and do not depend on the repository's Compose files.
   Open <http://localhost:3000> and sign in with the local demo platform
   account: `admin@wlbooking.com` / `admin123`.
 
+The demo data uses fixed dates that stay current until **31 December 2026**:
+the Main Green has a 2026 season override running to year end, and the sample
+events fall in November and December. After that, the Main Green shows as
+closed and the sample events are in the past. Either update the dates in
+`prisma/seed.ts` and re-seed, or sign in as `admin@lakeview.club` / `club123`
+and add a season override under **Dashboard → Greens** and new events under
+**Dashboard → Events**. The seed only adds missing records, so an existing
+database keeps its old dates until it is reset (`npx prisma migrate reset`).
+
 The demo credentials are for local development only. Optional integrations
 such as Unleash, ML, and external AI providers are not needed for this setup.
 
