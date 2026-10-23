@@ -26,7 +26,8 @@
     "FACILITIES": "Cyfleusterau",
     "SAFETY": "Diogelwch",
     "GROUNDS": "Tiroedd",
-    "OTHER": "Arall"
+    "OTHER": "Arall",
+    "PREVENTIVE": "Ataliadol"
   },
   "priorities": {
     "LOW": "Isel",
@@ -42,6 +43,7 @@
     "Reassign": "Ailneilltuo"
   },
   "labels": {
+    "chooseAssignee": "Dewiswch unigolyn…",
     "tenant": "Tenant:",
     "selectClub": "— Dewiswch glwb —",
     "submittedBy": "Cyflwynwyd gan {name}",

@@ -57,8 +57,11 @@ export default function MaintenancePage() {
   const [canSubmit, setCanSubmit] = useState(false);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [effectiveUserId, setEffectiveUserId] = useState<string | null>(null);
+  const [assignees, setAssignees] = useState<{ id: string; name: string }[]>([]);
+  const [assigneeChoice, setAssigneeChoice] = useState<Record<string, string>>({});
   const { trackFeature } = useTrack();
   const t = useTranslations("maintenance");
+  const tMaint = t; // the task list below shadows `t` with each task
 
   useEffect(() => {
     let mounted = true;
@@ -77,6 +80,15 @@ export default function MaintenancePage() {
       })
       .catch(() => { if (mounted) { setCanSubmit(false); setPermissions([]); setEffectiveUserId(null); } });
     return () => { mounted = false; };
+  }, [session]);
+
+  // Candidate assignees (tenant users with a maintenance role); 403 for users who can't assign.
+  useEffect(() => {
+    if (!session) return;
+    fetch("/api/maintenance/assignees")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => { if (Array.isArray(d)) setAssignees(d); })
+      .catch(() => {});
   }, [session]);
 
   useEffect(() => { trackFeature("maintenance.dashboard_opened", "MaintenanceTask"); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -146,10 +158,14 @@ export default function MaintenancePage() {
 
   async function handleStatusTransition(taskId: string, status: string) {
     setErrorMsg("");
+    // Assigning needs an assignee: send the chosen maintainer (the API moves the task to ASSIGNED).
+    const assigning = status === "ASSIGNED";
+    const assignedToId = assigneeChoice[taskId];
+    if (assigning && !assignedToId) { setErrorMsg(t("labels.chooseAssignee")); return; }
     const res = await fetch(`/api/maintenance/${taskId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(assigning ? { assignedToId } : { status }),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -215,10 +231,10 @@ export default function MaintenancePage() {
         <textarea placeholder="Description" value={form.description} onChange={(e) => { setForm({ ...form, description: e.target.value }); setErrorMsg(""); }} className="w-full rounded border p-2" />
         <div className="flex gap-3">
           <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="rounded border p-2">
-            {["GENERAL","RINK_SURFACE","EQUIPMENT","FACILITIES","SAFETY","GROUNDS","OTHER"].map((c) => <option key={c}>{c}</option>)}
+            {["GENERAL","RINK_SURFACE","EQUIPMENT","FACILITIES","SAFETY","GROUNDS","OTHER","PREVENTIVE"].map((c) => <option key={c} value={c}>{t(`categories.${c}`)}</option>)}
           </select>
           <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className="rounded border p-2">
-            {["LOW","MEDIUM","HIGH","URGENT"].map((p) => <option key={p}>{p}</option>)}
+            {["LOW","MEDIUM","HIGH","URGENT"].map((p) => <option key={p} value={p}>{t(`priorities.${p}`)}</option>)}
           </select>
         </div>
         <button type="submit" className="rounded bg-green-600 px-4 py-2 text-white hover:bg-green-700">{t("submitForm.submit")}</button>
@@ -248,7 +264,7 @@ export default function MaintenancePage() {
                 )}
               </h3>
               <div className="flex gap-2">
-                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{t.category}</span>
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{tMaint(`categories.${t.category}`)}</span>
                 <span className={`text-xs px-2 py-0.5 rounded ${
                   t.priority === "URGENT" ? "bg-red-100 text-red-700" :
                   t.priority === "HIGH" ? "bg-orange-100 text-orange-700" :
@@ -296,13 +312,24 @@ export default function MaintenancePage() {
                       if (!allowed) return null;
 
                       return (
+                        <span key={tr.next} className="flex gap-2">
+                        {action === "ASSIGNED" && (
+                          <select
+                            value={assigneeChoice[t.id] ?? ""}
+                            onChange={(e) => setAssigneeChoice((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                            className="rounded border px-2 py-1 text-xs"
+                          >
+                            <option value="">{tMaint("labels.chooseAssignee")}</option>
+                            {assignees.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                          </select>
+                        )}
                         <button
-                          key={tr.next}
                           onClick={() => handleStatusTransition(t.id, tr.next)}
                           className="rounded bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-700"
                         >
                           {tr.label}
                         </button>
+                        </span>
                       );
                     })}
                   </div>

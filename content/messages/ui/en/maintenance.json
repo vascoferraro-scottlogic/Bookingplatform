@@ -26,7 +26,8 @@
     "FACILITIES": "Facilities",
     "SAFETY": "Safety",
     "GROUNDS": "Grounds",
-    "OTHER": "Other"
+    "OTHER": "Other",
+    "PREVENTIVE": "Preventive"
   },
   "priorities": {
     "LOW": "Low",
@@ -42,6 +43,7 @@
     "Reassign": "Reassign"
   },
   "labels": {
+    "chooseAssignee": "Choose assignee…",
     "tenant": "Tenant:",
     "selectClub": "— Select a club —",
     "submittedBy": "Submitted by {name}",
