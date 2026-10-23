@@ -38,11 +38,11 @@ export default function WatchStreamPage() {
         fetch(`/api/streaming/${streamId}/leave`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ viewerId }),
+          body: JSON.stringify({ viewerId, token }),
         }).catch(() => {});
       }
     };
-  }, [viewerId, streamId]);
+  }, [viewerId, streamId, token]);
 
   async function fetchStream() {
     const url = token

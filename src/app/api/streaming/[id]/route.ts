@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSessionOrFail, jsonError } from "@/lib/api-utils";
-import { hasRole } from "@/lib/roles";
+import { getSessionOrFail, getEffective, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { isFeatureEnabled } from "@/lib/features";
 import { logAudit } from "@/lib/audit";
 import { getLiveViewerCount } from "@/lib/streaming";
+import { hasRole } from "@/lib/roles";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -31,6 +31,12 @@ export async function GET(req: NextRequest, context: RouteContext) {
 
   const viewerCount = await getLiveViewerCount(id);
 
+  // The stream key is for broadcasters only
+  if (!hasRole(getEffective(session).role, "MAINTENANCE")) {
+    const { streamKey: _streamKey, ...viewable } = stream;
+    return NextResponse.json({ ...viewable, viewerCount });
+  }
+
   return NextResponse.json({ ...stream, viewerCount });
 }
 
@@ -43,9 +49,8 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
-  if (!hasRole(session.user.role, "TENANT_ADMIN")) {
-    return jsonError("Forbidden", 403);
-  }
+  const roleErr = assertEffectiveRoleOrFail(session, "TENANT_ADMIN");
+  if (roleErr) return roleErr;
 
   const stream = await prisma.streamSession.findFirst({ where: { id, tenantId } });
   if (!stream) return jsonError("Stream not found", 404);
@@ -81,9 +86,8 @@ export async function DELETE(req: NextRequest, context: RouteContext) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
-  if (!hasRole(session.user.role, "TENANT_ADMIN")) {
-    return jsonError("Forbidden", 403);
-  }
+  const roleErr = assertEffectiveRoleOrFail(session, "TENANT_ADMIN");
+  if (roleErr) return roleErr;
 
   const flagOn = await isFeatureEnabled(tenantId, "liveStreaming");
   if (!flagOn) return jsonError("Live streaming is not enabled", 403);

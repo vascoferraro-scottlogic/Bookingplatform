@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/lib/api-utils";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { validateStreamToken, incrementTokenUse } from "@/lib/streaming";
+import { validateStreamToken } from "@/lib/streaming";
 import { logTrackingEvent, parseUserAgent, detectDeviceType } from "@/lib/tracking";
 import type { AppSession } from "@/lib/api-utils";
 
@@ -35,11 +35,10 @@ export async function POST(req: NextRequest, context: RouteContext) {
 
   // Token-based access
   if (token) {
-    const result = await validateStreamToken(token);
+    const result = await validateStreamToken(token, id);
     if (!result.valid) return jsonError("Invalid or expired token", 403);
     accessMethod = "TOKEN_LINK";
     tokenId = result.tokenId!;
-    await incrementTokenUse(tokenId);
   } else if (stream.visibility === "MEMBERS_ONLY" && !session) {
     return jsonError("Authentication required for members-only stream", 401);
   } else if (stream.visibility === "MEMBERS_ONLY" && session?.user.tenantId !== stream.tenantId) {

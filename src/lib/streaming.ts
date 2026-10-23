@@ -1,5 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { StreamingTier, StreamStatus } from "@prisma/client";
+import { Prisma, StreamingTier, StreamStatus } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import type { AppSession } from "@/lib/api-utils";
+
+/** Prisma client or interactive-transaction client. */
+type Db = Prisma.TransactionClient;
 
 // ─── Tier Definitions ────────────────────────────────────────
 
@@ -43,25 +49,63 @@ export async function upsertSubscription(tenantId: string, tier: StreamingTier) 
 
 // ─── Stream Lifecycle ────────────────────────────────────────
 
-export async function getActiveLiveStreams(tenantId: string) {
-  return prisma.streamSession.count({
+export async function getActiveLiveStreams(tenantId: string, db: Db = prisma) {
+  return db.streamSession.count({
     where: { tenantId, status: StreamStatus.LIVE },
   });
 }
 
-export async function canStartStream(tenantId: string): Promise<{ allowed: boolean; reason?: string }> {
-  const sub = await getTenantSubscription(tenantId);
+export async function canStartStream(tenantId: string, db: Db = prisma): Promise<{ allowed: boolean; reason?: string }> {
+  const sub = await db.tenantSubscription.findUnique({ where: { tenantId } });
   if (!sub || sub.tier === "NONE") {
     return { allowed: false, reason: "No streaming subscription active" };
   }
   if (sub.status !== "ACTIVE") {
     return { allowed: false, reason: "Subscription is not active" };
   }
-  const liveCount = await getActiveLiveStreams(tenantId);
+  const liveCount = await getActiveLiveStreams(tenantId, db);
   if (liveCount >= sub.maxConcurrentStreams) {
     return { allowed: false, reason: `Concurrent stream limit reached (${sub.maxConcurrentStreams})` };
   }
   return { allowed: true };
+}
+
+/**
+ * Move an IDLE stream to LIVE. The concurrency check and the status change run
+ * in one serializable transaction so two simultaneous starts can't both pass.
+ */
+export async function startStreamAtomically(
+  tenantId: string,
+  streamId: string,
+): Promise<{ started: boolean; reason?: string }> {
+  return prisma.$transaction(
+    async (tx) => {
+      const { allowed, reason } = await canStartStream(tenantId, tx);
+      if (!allowed) return { started: false, reason };
+      const { count } = await tx.streamSession.updateMany({
+        where: { id: streamId, tenantId, status: StreamStatus.IDLE },
+        data: { status: StreamStatus.LIVE, startedAt: new Date() },
+      });
+      if (count === 0) return { started: false, reason: "Stream is no longer idle" };
+      return { started: true };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+}
+
+/**
+ * Archive ENDED streams older than the tenant's archiveRetentionDays (FR-STR-002).
+ * Returns the number of streams archived.
+ */
+export async function archiveEndedStreams(tenantId: string): Promise<number> {
+  const sub = await getTenantSubscription(tenantId);
+  if (!sub) return 0;
+  const cutoff = new Date(Date.now() - sub.archiveRetentionDays * 24 * 60 * 60 * 1000);
+  const { count } = await prisma.streamSession.updateMany({
+    where: { tenantId, status: StreamStatus.ENDED, endedAt: { lt: cutoff } },
+    data: { status: StreamStatus.ARCHIVED },
+  });
+  return count;
 }
 
 export async function getLiveViewerCount(streamSessionId: string): Promise<number> {
@@ -72,19 +116,41 @@ export async function getLiveViewerCount(streamSessionId: string): Promise<numbe
 
 // ─── Token Validation ────────────────────────────────────────
 
-export async function validateStreamToken(token: string): Promise<{ valid: boolean; streamSessionId?: string; tokenId?: string }> {
+/** A token is only valid for the stream it was issued for. */
+export async function validateStreamToken(
+  token: string,
+  streamSessionId: string,
+): Promise<{ valid: boolean; streamSessionId?: string; tokenId?: string; maxUses?: number | null }> {
   const record = await prisma.streamToken.findUnique({ where: { token } });
   if (!record) return { valid: false };
+  if (record.streamSessionId !== streamSessionId) return { valid: false };
   if (record.expiresAt < new Date()) return { valid: false };
-  if (record.maxUses && record.useCount >= record.maxUses) return { valid: false };
-  return { valid: true, streamSessionId: record.streamSessionId, tokenId: record.id };
+  if (record.maxUses !== null && record.useCount >= record.maxUses) return { valid: false };
+  return { valid: true, streamSessionId: record.streamSessionId, tokenId: record.id, maxUses: record.maxUses };
 }
 
-export async function incrementTokenUse(tokenId: string) {
-  return prisma.streamToken.update({
-    where: { id: tokenId },
+/**
+ * Take one use of a token. The limit is part of the UPDATE's WHERE clause, so
+ * concurrent viewers can't exceed maxUses. Returns false when no use was left.
+ */
+export async function consumeTokenUse(tokenId: string, maxUses: number | null | undefined): Promise<boolean> {
+  const { count } = await prisma.streamToken.updateMany({
+    where: {
+      id: tokenId,
+      expiresAt: { gt: new Date() },
+      ...(maxUses != null ? { useCount: { lt: maxUses } } : {}),
+    },
     data: { useCount: { increment: 1 } },
   });
+  return count === 1;
+}
+
+/** True when the request has a session or a valid token for this stream (no use is consumed). */
+export async function hasStreamAccess(streamSessionId: string, token: string | null | undefined): Promise<boolean> {
+  const session = (await getServerSession(authOptions)) as AppSession | null;
+  if (session) return true;
+  if (!token) return false;
+  return (await validateStreamToken(token, streamSessionId)).valid;
 }
 
 // ─── Signaling (in-memory, per-stream) ───────────────────────

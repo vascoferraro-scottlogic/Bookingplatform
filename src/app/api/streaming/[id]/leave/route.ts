@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/lib/api-utils";
+import { hasStreamAccess } from "@/lib/streaming";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -8,7 +9,11 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function POST(req: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const body = await req.json();
-  const { viewerId } = body;
+  const { viewerId, token } = body;
+
+  if (!(await hasStreamAccess(id, token))) {
+    return jsonError("Unauthorized", 401);
+  }
 
   if (!viewerId) return jsonError("viewerId is required");
 

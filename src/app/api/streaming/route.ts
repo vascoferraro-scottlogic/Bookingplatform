@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSessionOrFail, jsonError } from "@/lib/api-utils";
-import { hasRole } from "@/lib/roles";
+import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { isFeatureEnabled } from "@/lib/features";
 import { logAudit } from "@/lib/audit";
-import { canStartStream } from "@/lib/streaming";
+import { archiveEndedStreams } from "@/lib/streaming";
 
 /** GET — list stream sessions for a tenant. */
 export async function GET(req: NextRequest) {
@@ -17,6 +16,9 @@ export async function GET(req: NextRequest) {
 
   const flagOn = await isFeatureEnabled(tenantId, "liveStreaming");
   if (!flagOn) return NextResponse.json([]);
+
+  // Enforce archive retention (FR-STR-002)
+  await archiveEndedStreams(tenantId).catch(() => {});
 
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
@@ -40,7 +42,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(streams);
 }
 
-/** POST — create a new stream session. TENANT_ADMIN+ only. */
+/** POST — create a new stream session. MAINTENANCE+ (FR-STR-001). */
 export async function POST(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
@@ -48,15 +50,11 @@ export async function POST(req: NextRequest) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
-  if (!hasRole(session.user.role, "TENANT_ADMIN")) {
-    return jsonError("Forbidden", 403);
-  }
+  const roleErr = assertEffectiveRoleOrFail(session, "MAINTENANCE");
+  if (roleErr) return roleErr;
 
   const flagOn = await isFeatureEnabled(tenantId, "liveStreaming");
   if (!flagOn) return jsonError("Live streaming is not enabled for this tenant", 403);
-
-  const { allowed, reason } = await canStartStream(tenantId);
-  if (!allowed) return jsonError(reason!, 403);
 
   const body = await req.json();
   const { title, rinkId, eventId, visibility } = body;

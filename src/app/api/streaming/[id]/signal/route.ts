@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/lib/api-utils";
-import { pushSignal, getSignals } from "@/lib/streaming";
+import { pushSignal, getSignals, hasStreamAccess } from "@/lib/streaming";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -10,6 +10,10 @@ export async function GET(req: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const { searchParams } = new URL(req.url);
   const since = parseInt(searchParams.get("since") ?? "0", 10);
+
+  if (!(await hasStreamAccess(id, searchParams.get("token")))) {
+    return jsonError("Unauthorized", 401);
+  }
 
   const stream = await prisma.streamSession.findUnique({ where: { id } });
   if (!stream) return jsonError("Stream not found", 404);
@@ -22,6 +26,11 @@ export async function GET(req: NextRequest, context: RouteContext) {
 /** POST — push a signaling message (offer/answer/ICE candidate). */
 export async function POST(req: NextRequest, context: RouteContext) {
   const { id } = await context.params;
+  const body = await req.json();
+
+  if (!(await hasStreamAccess(id, body?.token ?? new URL(req.url).searchParams.get("token")))) {
+    return jsonError("Unauthorized", 401);
+  }
 
   const stream = await prisma.streamSession.findUnique({ where: { id } });
   if (!stream) return jsonError("Stream not found", 404);
@@ -29,7 +38,6 @@ export async function POST(req: NextRequest, context: RouteContext) {
     return jsonError("Stream is not accepting connections", 400);
   }
 
-  const body = await req.json();
   const { type, from, payload } = body;
 
   if (!type || !from || !payload) {

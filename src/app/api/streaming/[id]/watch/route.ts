@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
-import { validateStreamToken, getLiveViewerCount } from "@/lib/streaming";
+import { validateStreamToken, consumeTokenUse, getLiveViewerCount } from "@/lib/streaming";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -34,15 +34,14 @@ export async function GET(req: NextRequest, context: RouteContext) {
       rink: stream.rink,
       event: stream.event,
       tenant: stream.tenant,
-      streamKey: stream.status === "LIVE" ? stream.streamKey : null,
       viewerCount,
     });
   }
 
   // MEMBERS_ONLY: check token first, then session
   if (token) {
-    const { valid } = await validateStreamToken(token);
-    if (valid) {
+    const { valid, tokenId, maxUses } = await validateStreamToken(token, id);
+    if (valid && (await consumeTokenUse(tokenId!, maxUses))) {
       const viewerCount = await getLiveViewerCount(id);
       return NextResponse.json({
         id: stream.id,
@@ -52,7 +51,6 @@ export async function GET(req: NextRequest, context: RouteContext) {
         rink: stream.rink,
         event: stream.event,
         tenant: stream.tenant,
-        streamKey: stream.status === "LIVE" ? stream.streamKey : null,
         viewerCount,
         accessMethod: "TOKEN_LINK",
       });
@@ -77,7 +75,6 @@ export async function GET(req: NextRequest, context: RouteContext) {
     rink: stream.rink,
     event: stream.event,
     tenant: stream.tenant,
-    streamKey: stream.status === "LIVE" ? stream.streamKey : null,
     viewerCount,
     accessMethod: "AUTHENTICATED",
   });

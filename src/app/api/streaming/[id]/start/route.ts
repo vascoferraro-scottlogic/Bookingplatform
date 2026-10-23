@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSessionOrFail, jsonError } from "@/lib/api-utils";
-import { hasRole } from "@/lib/roles";
+import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
-import { canStartStream, clearSignals } from "@/lib/streaming";
+import { startStreamAtomically } from "@/lib/streaming";
 import { createNotification } from "@/lib/notifications";
 import { sendToUsers } from "@/lib/sse-connections";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** POST — start a stream (IDLE → LIVE). TENANT_ADMIN+ only. */
+/** POST — start a stream (IDLE → LIVE). MAINTENANCE+ (FR-STR-001). */
 export async function POST(req: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const { session, error } = await getSessionOrFail();
@@ -19,9 +18,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
-  if (!hasRole(session.user.role, "TENANT_ADMIN")) {
-    return jsonError("Forbidden", 403);
-  }
+  const roleErr = assertEffectiveRoleOrFail(session, "MAINTENANCE");
+  if (roleErr) return roleErr;
 
   const stream = await prisma.streamSession.findFirst({ where: { id, tenantId } });
   if (!stream) return jsonError("Stream not found", 404);
@@ -30,14 +28,14 @@ export async function POST(req: NextRequest, context: RouteContext) {
     return jsonError(`Cannot start stream in ${stream.status} state`, 400);
   }
 
-  const { allowed, reason } = await canStartStream(tenantId);
-  if (!allowed) return jsonError(reason!, 403);
+  const { started, reason } = await startStreamAtomically(tenantId, id);
+  if (!started) return jsonError(reason!, 403);
 
-  const updated = await prisma.streamSession.update({
-    where: { id },
-    data: { status: "LIVE", startedAt: new Date() },
+  const updated = await prisma.streamSession.findFirst({
+    where: { id, tenantId },
     include: { rink: { include: { green: { select: { name: true } } } } },
   });
+  if (!updated) return jsonError("Stream not found", 404);
 
   logAudit({
     session,

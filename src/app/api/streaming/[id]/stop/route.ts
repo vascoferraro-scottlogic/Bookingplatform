@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSessionOrFail, jsonError } from "@/lib/api-utils";
-import { hasRole } from "@/lib/roles";
+import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
 import { clearSignals } from "@/lib/streaming";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** POST — stop a stream (LIVE → ENDED). TENANT_ADMIN+ only. */
+/** POST — stop a stream (LIVE → ENDED). MAINTENANCE+ (FR-STR-001). */
 export async function POST(req: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const { session, error } = await getSessionOrFail();
@@ -17,9 +16,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
-  if (!hasRole(session.user.role, "TENANT_ADMIN")) {
-    return jsonError("Forbidden", 403);
-  }
+  const roleErr = assertEffectiveRoleOrFail(session, "MAINTENANCE");
+  if (roleErr) return roleErr;
 
   const stream = await prisma.streamSession.findFirst({ where: { id, tenantId } });
   if (!stream) return jsonError("Stream not found", 404);

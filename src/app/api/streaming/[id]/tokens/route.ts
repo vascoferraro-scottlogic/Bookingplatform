@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSessionOrFail, jsonError } from "@/lib/api-utils";
-import { hasRole } from "@/lib/roles";
+import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
 import crypto from "crypto";
@@ -17,9 +16,8 @@ export async function GET(req: NextRequest, context: RouteContext) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
-  if (!hasRole(session.user.role, "TENANT_ADMIN")) {
-    return jsonError("Forbidden", 403);
-  }
+  const roleErr = assertEffectiveRoleOrFail(session, "TENANT_ADMIN");
+  if (roleErr) return roleErr;
 
   const stream = await prisma.streamSession.findFirst({ where: { id, tenantId } });
   if (!stream) return jsonError("Stream not found", 404);
@@ -41,15 +39,21 @@ export async function POST(req: NextRequest, context: RouteContext) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
-  if (!hasRole(session.user.role, "TENANT_ADMIN")) {
-    return jsonError("Forbidden", 403);
-  }
+  const roleErr = assertEffectiveRoleOrFail(session, "TENANT_ADMIN");
+  if (roleErr) return roleErr;
 
   const stream = await prisma.streamSession.findFirst({ where: { id, tenantId } });
   if (!stream) return jsonError("Stream not found", 404);
 
   const body = await req.json();
   const { expiresInHours = 24, maxUses } = body;
+
+  if (typeof expiresInHours !== "number" || !Number.isFinite(expiresInHours) || expiresInHours <= 0) {
+    return jsonError("expiresInHours must be a positive number");
+  }
+  if (maxUses != null && (typeof maxUses !== "number" || !Number.isInteger(maxUses) || maxUses < 1)) {
+    return jsonError("maxUses must be a whole number of at least 1");
+  }
 
   const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
   const token = crypto.randomBytes(32).toString("hex");
@@ -60,7 +64,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
       tenantId,
       token,
       expiresAt,
-      maxUses: maxUses || null,
+      maxUses: maxUses ?? null,
       createdById: session.user.id,
     },
   });
