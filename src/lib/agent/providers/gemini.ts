@@ -10,12 +10,12 @@ import {
  * Google Gemini provider. Uses the REST API directly so we don't pull in the
  * official SDK (keeps dependency footprint small and avoids version churn).
  *
- * Free tier (gemini-1.5-flash): ~15 RPM, 1500 req/day. Plenty for batched
+ * Free tier (gemini-2.5-flash): ~15 RPM, 1500 req/day. Plenty for batched
  * agent runs in dev / training environments.
  *
  * Env:
  *   AGENT_GEMINI_API_KEY   — required
- *   AGENT_GEMINI_MODEL     — optional, defaults to "gemini-1.5-flash"
+ *   AGENT_GEMINI_MODEL     — optional, defaults to "gemini-2.5-flash"
  */
 export class GeminiProvider implements LLMProvider {
   readonly name = "gemini";
@@ -24,7 +24,7 @@ export class GeminiProvider implements LLMProvider {
 
   constructor(apiKey?: string, model?: string) {
     this.apiKey = apiKey ?? process.env.AGENT_GEMINI_API_KEY ?? "";
-    this.model = model ?? process.env.AGENT_GEMINI_MODEL ?? "gemini-1.5-flash";
+    this.model = model ?? process.env.AGENT_GEMINI_MODEL ?? "gemini-2.5-flash";
     if (!this.apiKey) {
       throw new LLMProviderError(
         "Gemini provider requires AGENT_GEMINI_API_KEY env var",
