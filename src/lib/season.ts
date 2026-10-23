@@ -28,29 +28,72 @@ export interface SeasonWindow {
   end: string;   // ISO date
 }
 
+export const DEFAULT_CLUB_TIMEZONE = "Europe/London";
+
+/**
+ * Normalise a date-only string ("2027-03-15") or an ISO instant to a
+ * "YYYY-MM-DD" calendar date. Date-only values are used as-is; instants are
+ * converted to the club's timezone (D-05), never the server's.
+ */
+export function clubDateString(dateStr: string, timeZone: string = DEFAULT_CLUB_TIMEZONE): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(dateStr));
+  const get = (t: string) => parts.find((p) => p.type === t)!.value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** The current calendar year in the club's timezone. */
+export function currentClubYear(timeZone: string = DEFAULT_CLUB_TIMEZONE, now: Date = new Date()): number {
+  return Number(clubDateString(now.toISOString(), timeZone).slice(0, 4));
+}
+
+/** Strict MM-DD check: month 01–12 and a day valid for that month (02-29 allowed). */
+export function isValidMMDD(value: string): boolean {
+  const m = /^(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const month = Number(m[1]);
+  const day = Number(m[2]);
+  if (month < 1 || month > 12 || day < 1) return false;
+  const daysInMonth = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= daysInMonth[month - 1];
+}
+
+const yearOf = (isoDate: string) => Number(isoDate.slice(0, 4));
+
+/** 02-29 in a non-leap year means 28 Feb. */
+function clampLeapDay(mmdd: string, year: number): string {
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  return mmdd === "02-29" && !leap ? "02-28" : mmdd;
+}
+
 /**
  * Is a green open for bookings on the given date?
+ *
+ * `dateStr` is a date-only string or an ISO instant (converted to club time).
  */
-export function isGreenOpenOn(green: GreenSeasonInfo, dateStr: string): boolean {
+export function isGreenOpenOn(
+  green: GreenSeasonInfo,
+  dateStr: string,
+  timeZone: string = DEFAULT_CLUB_TIMEZONE,
+): boolean {
   if (green.allWeather) return true;
 
-  const d = new Date(dateStr);
-  const year = d.getFullYear();
+  const d = clubDateString(dateStr, timeZone);
+  const year = yearOf(d);
 
   // Check this year's window
   const window = seasonWindowForYear(green, year);
   if (!window) return true; // no season configured → always open
 
-  if (d >= new Date(window.start) && d <= new Date(window.end)) return true;
+  if (d >= window.start && d <= window.end) return true;
 
   // For wrap-around seasons (end in next year), also check the previous year's
   // window — a Jan/Feb date might fall inside last year's Nov→Feb window.
   const prevWindow = seasonWindowForYear(green, year - 1);
-  if (prevWindow && new Date(prevWindow.end) >= new Date(prevWindow.start)) {
-    // Only relevant if previous window wraps (end year > start year)
-    if (new Date(prevWindow.end).getFullYear() > new Date(prevWindow.start).getFullYear()) {
-      if (d >= new Date(prevWindow.start) && d <= new Date(prevWindow.end)) return true;
-    }
+  if (prevWindow && yearOf(prevWindow.end) > yearOf(prevWindow.start)) {
+    if (d >= prevWindow.start && d <= prevWindow.end) return true;
   }
 
   return false;
@@ -63,8 +106,9 @@ export function isGreenOpenOn(green: GreenSeasonInfo, dateStr: string): boolean 
 export function seasonWindowForDate(
   green: GreenSeasonInfo,
   dateStr: string,
+  timeZone: string = DEFAULT_CLUB_TIMEZONE,
 ): SeasonWindow | null {
-  const year = new Date(dateStr).getFullYear();
+  const year = yearOf(clubDateString(dateStr, timeZone));
   return seasonWindowForYear(green, year);
 }
 
@@ -102,14 +146,13 @@ export function recurringWindowForYear(
   endMMDD: string,
   year: number,
 ): SeasonWindow {
-  const start = `${year}-${startMMDD}`;
-
   // If end < start (e.g. 11-01 → 02-28), the season wraps into the next year
-  const end = endMMDD < startMMDD
-    ? `${year + 1}-${endMMDD}`
-    : `${year}-${endMMDD}`;
+  const endYear = endMMDD < startMMDD ? year + 1 : year;
 
-  return { start, end };
+  return {
+    start: `${year}-${clampLeapDay(startMMDD, year)}`,
+    end: `${endYear}-${clampLeapDay(endMMDD, endYear)}`,
+  };
 }
 
 /**
@@ -126,8 +169,9 @@ export function bookableYears(
   green: GreenSeasonInfo,
   todayStr: string,
   horizon: number = 2,
+  timeZone: string = DEFAULT_CLUB_TIMEZONE,
 ): number[] {
-  const todayYear = new Date(todayStr).getFullYear();
+  const todayYear = yearOf(clubDateString(todayStr, timeZone));
   const years: number[] = [];
 
   for (let y = todayYear; y <= todayYear + horizon; y++) {
