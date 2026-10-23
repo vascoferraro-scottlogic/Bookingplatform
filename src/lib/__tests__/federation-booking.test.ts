@@ -67,7 +67,7 @@ beforeEach(() => {
   // Federation flag is on for both clubs.
   prismaMock.featureFlag.findUnique.mockImplementation((async (args: any) => {
     const { tenantId, key } = args.where.tenantId_key;
-    return [HOME, AWAY].includes(tenantId) && key === "federation" ? { tenantId, key, enabled: true } : null;
+    return [HOME, AWAY].includes(tenantId) && (key === "federation" || key === "bookings") ? { tenantId, key, enabled: true } : null;
   }) as never);
   // Both clubs exist and are ACTIVE.
   prismaMock.tenant.findUnique.mockImplementation((async (args: any) =>
@@ -102,7 +102,9 @@ describe("Same-club booking (no regression)", () => {
     expect(body.tenantId).toBe(HOME);
     expect(body.bookedByTenantId).toBeNull();
     expect(body.federationId).toBeNull();
-    expect(prismaMock.featureFlag.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.featureFlag.findUnique).not.toHaveBeenCalledWith({
+      where: { tenantId_key: { tenantId: HOME, key: "federation" } },
+    });
   });
 });
 
@@ -184,7 +186,10 @@ describe("Cross-club booking via federation", () => {
 
   test("federation feature disabled gets 403", async () => {
     signInAs(HOME_USER);
-    prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: false } as never);
+    prismaMock.featureFlag.findUnique.mockImplementation((async (args: any) => {
+      const { tenantId, key } = args.where.tenantId_key;
+      return { tenantId, key, enabled: key !== "federation" };
+    }) as never);
 
     const { status } = await readJson(
       await book({ date: isoDateFromToday(34), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] }),
@@ -214,7 +219,7 @@ describe("Cross-club booking via federation", () => {
     signInAs(HOME_USER);
     prismaMock.featureFlag.findUnique.mockImplementation((async (args: any) => {
       const { tenantId, key } = args.where.tenantId_key;
-      return tenantId === HOME && key === "federation" ? { tenantId, key, enabled: true } : { tenantId, key, enabled: false };
+      return tenantId === HOME || key === "bookings" ? { tenantId, key, enabled: true } : { tenantId, key, enabled: false };
     }) as never);
 
     const { status } = await readJson(

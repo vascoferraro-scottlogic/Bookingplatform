@@ -25,6 +25,8 @@ jest.mock("@/lib/prisma", () => ({
   },
 }));
 
+// The maintenance module flag is on (FR-FLAG-002); this file tests role/permission rules.
+jest.mock("@/lib/features", () => ({ moduleFlagOrFail: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/notifications", () => ({ createNotification: jest.fn() }));
 jest.mock("@/lib/audit", () => ({ logAudit: jest.fn() }));
 

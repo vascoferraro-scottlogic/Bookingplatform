@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, getEffective, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
@@ -15,6 +16,9 @@ const ALLOWED: TaskVisibility[] = ["MAINTENANCE_ONLY", "MEMBERS", "PUBLIC"];
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "maintenance");
+  if (flagErr) return flagErr;
 
   const roleErr = assertEffectiveRoleOrFail(session, "MAINTENANCE");
   if (roleErr) return roleErr;

@@ -5,7 +5,7 @@ import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
 import { isGreenOpenOn, type GreenSeasonInfo } from "@/lib/season";
 import { hasPermission, assertPermissionOrFail, Permission } from "@/lib/permissions";
-import { isFeatureEnabled } from "@/lib/features";
+import { isFeatureEnabled, moduleFlagOrFail } from "@/lib/features";
 import { createNotification, type NotificationType } from "@/lib/notifications";
 import {
   DEFAULT_CLOSING_TIME,
@@ -62,6 +62,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "bookings");
+  if (flagErr) return flagErr;
 
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;

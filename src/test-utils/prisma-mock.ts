@@ -21,6 +21,12 @@ function createMock(): DeepMockProxy<PrismaClient> {
     if (typeof arg === "function") return (arg as (tx: unknown) => unknown)(m);
     return Promise.all(arg as Promise<unknown>[]);
   }) as never);
+  // Module flags (FR-FLAG-002) are ON unless a test turns one off; a missing row would read as off.
+  m.featureFlag.findUnique.mockImplementation((async ({ where }: any) => ({
+    tenantId: where.tenantId_key.tenantId,
+    key: where.tenantId_key.key,
+    enabled: true,
+  })) as never);
   return m;
 }
 

@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrFail, getEffective } from "@/lib/api-utils";
 import { prisma } from "@/lib/prisma";
@@ -6,6 +7,9 @@ import { hasRole, isPlatformAdmin as isPlatformAdminRole } from "@/lib/roles";
 export async function GET(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "analytics");
+  if (flagErr) return flagErr;
 
   // Allow real TENANT_ADMIN+ in their tenant, or PLATFORM_ADMIN cross-tenant view.
   const eff = getEffective(session);

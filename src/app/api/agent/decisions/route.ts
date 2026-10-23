@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, jsonError } from "@/lib/api-utils";
@@ -14,6 +15,9 @@ import { resolveTenantId } from "@/lib/tenant";
 export async function GET(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "agent");
+  if (flagErr) return flagErr;
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 

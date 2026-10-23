@@ -1,16 +1,17 @@
+import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getEffectiveRole } from "@/lib/roles";
-import { isPlatformFlag } from "@/lib/flags/keys";
+import { isPlatformFlag, DEFAULT_ON_FLAGS } from "@/lib/flags/keys";
 import { getUnleash } from "@/lib/flags/unleash";
 import { buildContext } from "@/lib/flags/context";
 import type { AppSession } from "@/lib/api-utils";
 
-/** Read a tenant's boolean flag from Postgres (default false). */
+/** Read a tenant's boolean flag from Postgres (default false, except DEFAULT_ON_FLAGS). */
 async function readPostgresFlag(tenantId: string, key: string): Promise<boolean> {
   const flag = await prisma.featureFlag.findUnique({
     where: { tenantId_key: { tenantId, key } },
   });
-  return flag?.enabled ?? false;
+  return flag?.enabled ?? DEFAULT_ON_FLAGS.has(key);
 }
 
 /**
@@ -42,6 +43,18 @@ export async function isFeatureEnabled(tenantId: string, key: string): Promise<b
     }
   }
   return readPostgresFlag(tenantId, key);
+}
+
+/**
+ * Module gate (FR-FLAG-002): 403 when the module flag is off for the caller's
+ * effective tenant, otherwise null. No tenant context (platform admin who is not
+ * impersonating) passes through; the route's own tenant handling deals with it.
+ */
+export async function moduleFlagOrFail(session: AppSession, key: string): Promise<NextResponse | null> {
+  const tenantId = getEffectiveRole(session.user).tenantId;
+  if (!tenantId) return null;
+  if (await isFeatureEnabled(tenantId, key)) return null;
+  return NextResponse.json({ error: `The ${key} module is not enabled for this club` }, { status: 403 });
 }
 
 /**

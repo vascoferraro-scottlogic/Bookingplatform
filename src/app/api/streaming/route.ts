@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   if (tErr) return tErr;
 
   const flagOn = await isFeatureEnabled(tenantId, "liveStreaming");
-  if (!flagOn) return NextResponse.json([]);
+  if (!flagOn) return jsonError("Live streaming is not enabled for this tenant", 403);
 
   // Enforce archive retention (FR-STR-002)
   await archiveEndedStreams(tenantId).catch(() => {});

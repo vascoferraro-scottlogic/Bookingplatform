@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, getEffective, jsonError } from "@/lib/api-utils";
@@ -21,6 +22,9 @@ import type { Prisma, TaskCategory, TaskPriority } from "@prisma/client";
 export async function GET(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "maintenance");
+  if (flagErr) return flagErr;
 
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
@@ -60,6 +64,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "maintenance");
+  if (flagErr) return flagErr;
 
   // MAINTENANCE / TENANT_ADMIN role, or the `maintenance_create` permission (via groups).
   // Agent-generated tasks still use the committer flow and default to

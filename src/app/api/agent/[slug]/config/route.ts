@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, getEffective, jsonError } from "@/lib/api-utils";
@@ -17,6 +18,9 @@ type Ctx = { params: Promise<{ slug: string }> };
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "agent");
+  if (flagErr) return flagErr;
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
   if (!hasRole(getEffective(session).role, "TENANT_ADMIN")) return jsonError("Forbidden", 403);
@@ -39,6 +43,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "agent");
+  if (flagErr) return flagErr;
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
   if (!hasRole(getEffective(session).role, "TENANT_ADMIN")) return jsonError("Forbidden", 403);

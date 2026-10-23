@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, getEffective, jsonError } from "@/lib/api-utils";
@@ -19,6 +20,9 @@ const VALID_TRANSITIONS: Record<string, TaskStatus[]> = {
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "maintenance");
+  if (flagErr) return flagErr;
 
   const { id } = await params;
   let body: Record<string, any>;

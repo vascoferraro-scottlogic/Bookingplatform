@@ -41,6 +41,7 @@ export const CAPABILITY_PRESET_FLAGS = [
   "charity",
   "liveStreaming",
   "analytics",
+  "maintenance",
 ] as const;
 
 /**
@@ -102,3 +103,9 @@ export function isCapabilityPresetFlag(key: string): boolean {
 export function isPostgresOwnedFlag(key: string): boolean {
   return !PLATFORM_SET.has(key);
 }
+
+/**
+ * Flags that are ON for a tenant with no flag row. Maintenance shipped before it
+ * had a flag, so existing tenants must keep it until someone turns it off.
+ */
+export const DEFAULT_ON_FLAGS: ReadonlySet<string> = new Set(["maintenance"]);

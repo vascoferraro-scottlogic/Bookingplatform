@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, jsonError } from "@/lib/api-utils";
@@ -9,6 +10,9 @@ import { maintenanceGateOrFail } from "../gate";
 export async function GET(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "maintenance");
+  if (flagErr) return flagErr;
 
   const permErr = await maintenanceGateOrFail(session, Permission.maintenance_assign);
   if (permErr) return permErr;

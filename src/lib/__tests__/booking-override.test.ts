@@ -61,7 +61,7 @@ beforeEach(() => {
   rinksFor = (tenantId) => [tenantId === AWAY ? rinkRow(AWAY_RINK, AWAY) : rinkRow(HOME_RINK, HOME)];
   prismaMock.featureFlag.findUnique.mockImplementation((async (args: any) => {
     const { tenantId, key } = args.where.tenantId_key;
-    return key === "federation" ? { tenantId, key, enabled: true } : null;
+    return key === "federation" || key === "bookings" ? { tenantId, key, enabled: true } : null;
   }) as never);
   prismaMock.tenant.findUnique.mockImplementation((async (args: any) =>
     [HOME, AWAY].includes(args.where.id) ? tenantRow(args.where.id) : null) as never);

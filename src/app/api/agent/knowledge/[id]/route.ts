@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { KnowledgeScope } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -19,6 +20,9 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "agent");
+  if (flagErr) return flagErr;
   const { id } = await ctx.params;
   const entry = await prisma.agentKnowledge.findUnique({ where: { id } });
   if (!entry) return jsonError("Not found", 404);
@@ -51,6 +55,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "agent");
+  if (flagErr) return flagErr;
   const { id } = await ctx.params;
   const entry = await prisma.agentKnowledge.findUnique({ where: { id } });
   if (!entry) return jsonError("Not found", 404);

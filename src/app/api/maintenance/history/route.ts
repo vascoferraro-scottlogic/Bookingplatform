@@ -1,3 +1,4 @@
+import { moduleFlagOrFail } from "@/lib/features";
 import { NextRequest, NextResponse } from "next/server";
 import { MaintenanceActivityType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -18,6 +19,9 @@ import { logAudit } from "@/lib/audit";
 export async function GET(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "maintenance");
+  if (flagErr) return flagErr;
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
   if (!hasRole(getEffective(session).role, "MAINTENANCE")) return jsonError("Forbidden", 403);
@@ -55,6 +59,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
+
+  const flagErr = await moduleFlagOrFail(session, "maintenance");
+  if (flagErr) return flagErr;
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
   if (!hasRole(getEffective(session).role, "MAINTENANCE")) return jsonError("Forbidden", 403);
