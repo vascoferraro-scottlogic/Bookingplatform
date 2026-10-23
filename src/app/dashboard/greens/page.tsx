@@ -32,7 +32,7 @@ export default function GreensPage() {
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [seasonFormGreen, setSeasonFormGreen] = useState<string | null>(null);
-  const [seasonYear, setSeasonYear] = useState(new Date().getFullYear() + 1);
+  const [seasonYear, setSeasonYear] = useState(new Date().getFullYear());
   const [seasonStart, setSeasonStart] = useState("");
   const [seasonEnd, setSeasonEnd] = useState("");
   const [seasonNote, setSeasonNote] = useState("");
@@ -172,7 +172,7 @@ export default function GreensPage() {
   async function handleDeleteSeason(greenId: string, year: number) {
     if (!confirm(`Remove the ${year} season override?`)) return;
     const qs = selectedTenant ? `?tenantId=${encodeURIComponent(selectedTenant)}` : "";
-    const res = await fetch(`/api/admin/greens/${greenId}/seasons${qs}&year=${year}`, { method: "DELETE" });
+    const res = await fetch(`/api/admin/greens/${greenId}/seasons?${new URLSearchParams({ ...(selectedTenant ? { tenantId: selectedTenant } : {}), year: String(year) })}`, { method: "DELETE" });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       flash(d.error ?? "Failed to delete season override", true);
@@ -414,7 +414,7 @@ export default function GreensPage() {
                       <button onClick={() => setSeasonFormGreen(null)} className="rounded bg-gray-300 px-3 py-1 text-xs hover:bg-gray-400">Cancel</button>
                     </div>
                   ) : (
-                    <button onClick={() => { setSeasonFormGreen(g.id); setSeasonYear(new Date().getFullYear() + 1); }}
+                    <button onClick={() => { setSeasonFormGreen(g.id); setSeasonYear(new Date().getFullYear()); }}
                       className="text-xs text-green-700 hover:underline">{t("greens.addSeasonOverride")}</button>
                   )}
                 </div>
