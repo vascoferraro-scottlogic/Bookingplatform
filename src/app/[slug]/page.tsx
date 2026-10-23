@@ -84,9 +84,21 @@ export default async function PublicClubPage({ params }: Params) {
     });
   }
 
-  // Fetch events — authenticated members see all published, guests see public only
+  // MEMBERS_ONLY events are for members of THIS club only (FR-EVT-003)
+  const sessionUser = session?.user as { id?: string; tenantId?: string | null } | undefined;
+  const isClubMember =
+    isAuthenticated &&
+    ((acting ? acting.tenantId === tenant.id : sessionUser?.tenantId === tenant.id) ||
+      (!acting &&
+        !!sessionUser?.id &&
+        !!(await prisma.membership.findFirst({
+          where: { userId: sessionUser.id, tenantId: tenant.id, status: "ACTIVE" },
+          select: { id: true },
+        }))));
+
+  // Fetch events — club members see all published, everyone else public only
   let events: { id: string; title: string; description: string; category: string; format: string | null; playerCount: string | null; date: string; startTime: string; endTime: string | null; location: string | null; capacity: number | null; entryFee: number | null; currency: string; imageUrl: string | null; visibility: string }[] = [];
-  if (isAuthenticated) {
+  if (isClubMember) {
     const memberEventsOn = await isFeatureEnabled(tenant.id, "events");
     if (memberEventsOn) {
       const today = new Date().toISOString().slice(0, 10);
