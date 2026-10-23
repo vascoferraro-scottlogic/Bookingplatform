@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { parseUserAgent, detectDeviceType, hashFingerprint, logTrackingEventBatch } from "@/lib/tracking";
 import type { TrackingEventType } from "@prisma/client";
+import { getClientIp } from "@/lib/client-ip";
 
 const VALID_EVENT_TYPES = new Set<string>(["PAGE_VIEW", "FEATURE_USE", "INTERACTION", "SESSION_START"]);
 const MAX_EVENTS_PER_REQUEST = 50;
@@ -37,7 +38,7 @@ interface IncomingEvent {
 }
 
 export async function POST(req: NextRequest) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip") ?? "unknown";
+  const ip = getClientIp(req);
 
   if (isRateLimited(ip)) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 });

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/lib/api-utils";
 import { sendEmail } from "@/lib/outbound";
 import type { Vertical } from "@prisma/client";
+import { getClientIp } from "@/lib/client-ip";
 
 // In-memory rate limit: max 5 submissions per IP per 10 minutes.
 // Public endpoint, so cheap throttling is enough for v1.
@@ -38,10 +39,7 @@ function isEmail(s: unknown): s is string {
  *  - Stubs a notification email to all platform admins.
  */
 export async function POST(req: NextRequest) {
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    req.headers.get("x-real-ip") ??
-    "unknown";
+  const ip = getClientIp(req);
 
   if (isRateLimited(ip)) {
     return NextResponse.json({ error: "Too many submissions" }, { status: 429 });

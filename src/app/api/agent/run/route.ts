@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrFail, jsonError } from "@/lib/api-utils";
 import { isFeatureEnabled } from "@/lib/features";
@@ -79,12 +80,18 @@ export async function GET() {
   });
 }
 
+/** Timing-safe bearer comparison. Digests keep the lengths equal so a wrong-length token is a mismatch, not a throw. */
+function bearerMatches(auth: string, secret: string): boolean {
+  const digest = (v: string) => crypto.createHash("sha256").update(v).digest();
+  return crypto.timingSafeEqual(digest(auth), digest(`Bearer ${secret}`));
+}
+
 async function authoriseRun(
   req: NextRequest,
 ): Promise<{ tenantId: string; viaSecret: boolean; error?: undefined } | { tenantId?: undefined; viaSecret?: undefined; error: NextResponse }> {
   const auth = req.headers.get("authorization") ?? "";
   const secret = process.env.AGENT_SECRET;
-  if (secret && auth === `Bearer ${secret}`) {
+  if (secret && bearerMatches(auth, secret)) {
     const tenantIdParam = req.nextUrl.searchParams.get("tenantId");
     if (!tenantIdParam) {
       return { error: jsonError("tenantId query parameter required when using bearer token", 400) };
