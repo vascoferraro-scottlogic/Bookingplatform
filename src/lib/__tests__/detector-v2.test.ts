@@ -222,7 +222,7 @@ describe("DetectionAgent v2 — propose-not-publish", () => {
       ids.map((id, i) => ({
         messageId: id,
         isComplaint: true,
-        category: "GENERAL",
+        category: "FACILITIES", // a qualifying (D-14) category, so only the cap limits proposals
         priority: "MEDIUM",
         suggestedTitle: `Issue ${i}`,
         suggestedDescription: `desc ${i}`,
@@ -301,13 +301,13 @@ describe("DetectionAgent v2 — clustering (3c-iii)", () => {
 
   test("unrelated complaints do NOT cluster — one proposal each", async () => {
     const m1 = seedFromUser(memberId, "Sprinkler on green 1 stuck running");
-    const m2 = seedFromUser(memberB, "Net torn on rink 4");
+    const m2 = seedFromUser(memberB, "Loose paving slab by the clubhouse steps");
 
     const agent = agentWith(makeFakeProvider([
       { messageId: m1, isComplaint: true, category: "GROUNDS", priority: "MEDIUM",
         suggestedTitle: "Sprinkler stuck", suggestedDescription: "x", confidence: 0.8 },
-      { messageId: m2, isComplaint: true, category: "EQUIPMENT", priority: "MEDIUM",
-        suggestedTitle: "Net torn rink 4", suggestedDescription: "x", confidence: 0.8 },
+      { messageId: m2, isComplaint: true, category: "SAFETY", priority: "HIGH",
+        suggestedTitle: "Loose paving slab", suggestedDescription: "x", confidence: 0.8 },
     ]));
 
     await agent.runForTenant(tenantId);
@@ -341,5 +341,63 @@ describe("DetectionAgent v2 — clustering (3c-iii)", () => {
     // Only the 2 complaint members get decision rows linked to this proposal
     const [proposalId] = await proposalIds();
     expect(decisions().filter((d) => d.proposalId === proposalId)).toHaveLength(2);
+  });
+});
+
+describe("DetectionAgent v2 — triage categories (D-14)", () => {
+  test("[B-86] D-14 / FR-AGT-001 – GENERAL and EQUIPMENT complaints produce no proposals", async () => {
+    const m1 = seedFromUser(memberId, "The tea urn in the kitchen has stopped working");
+    const m2 = seedFromUser(memberB, "Membership renewal emails keep arriving twice");
+
+    const agent = agentWith(makeFakeProvider([
+      { messageId: m1, isComplaint: true, category: "EQUIPMENT", priority: "MEDIUM",
+        suggestedTitle: "Tea urn broken", suggestedDescription: "x", confidence: 0.9 },
+      { messageId: m2, isComplaint: true, category: "GENERAL", priority: "LOW",
+        suggestedTitle: "Duplicate renewal emails", suggestedDescription: "x", confidence: 0.9 },
+    ]));
+
+    const run = await agent.runForTenant(tenantId);
+
+    expect(run.status).toBe("COMPLETED");
+    expect(prismaMock.agentProposal.create).not.toHaveBeenCalled();
+    expect(prismaMock.maintenanceTask.create).not.toHaveBeenCalled();
+  });
+
+  test("[B-86] D-14 / FR-AGT-001 – SAFETY, FACILITIES and GROUNDS complaints each produce a proposal", async () => {
+    const m1 = seedFromUser(memberId, "Loose paving slab by the clubhouse steps");
+    const m2 = seedFromUser(memberB, "Heating broken in the changing rooms");
+    const m3 = seedFromUser(memberC, "Sprinkler on green 1 stuck running");
+
+    const agent = agentWith(makeFakeProvider([
+      { messageId: m1, isComplaint: true, category: "SAFETY", priority: "HIGH",
+        suggestedTitle: "Loose paving slab", suggestedDescription: "x", confidence: 0.9 },
+      { messageId: m2, isComplaint: true, category: "FACILITIES", priority: "MEDIUM",
+        suggestedTitle: "Heating broken", suggestedDescription: "x", confidence: 0.9 },
+      { messageId: m3, isComplaint: true, category: "GROUNDS", priority: "MEDIUM",
+        suggestedTitle: "Sprinkler stuck", suggestedDescription: "x", confidence: 0.9 },
+    ]));
+
+    await agent.runForTenant(tenantId);
+
+    const categories = proposals().map((p) => JSON.parse(p.payload).category);
+    expect(categories.sort()).toEqual(["FACILITIES", "GROUNDS", "SAFETY"]);
+  });
+
+  test("[B-86] D-14 / FR-AGT-001 – in a mixed batch only the qualifying complaint becomes a proposal", async () => {
+    const m1 = seedFromUser(memberId, "Broken handrail on the pavilion stairs");
+    const m2 = seedFromUser(memberB, "Scoreboard numbers missing for rink 5");
+
+    const agent = agentWith(makeFakeProvider([
+      { messageId: m1, isComplaint: true, category: "SAFETY", priority: "HIGH",
+        suggestedTitle: "Broken handrail", suggestedDescription: "x", confidence: 0.9 },
+      { messageId: m2, isComplaint: true, category: "EQUIPMENT", priority: "LOW",
+        suggestedTitle: "Scoreboard numbers missing", suggestedDescription: "x", confidence: 0.9 },
+    ]));
+
+    await agent.runForTenant(tenantId);
+
+    const emitted = proposals();
+    expect(emitted).toHaveLength(1);
+    expect(JSON.parse(emitted[0].payload)).toMatchObject({ category: "SAFETY", sourceMessageIds: [m1] });
   });
 });

@@ -27,8 +27,38 @@ function progressRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * A tenant mid-onboarding with every chapter's data filled in, so the server
+ * can derive any chapter as complete (B-83: completion is derived server-side,
+ * not trusted from the client).
+ */
+function onboardingTenant(overrides: Record<string, unknown> = {}) {
+  return {
+    id: TENANT,
+    name: "Lakeview Bowls Club",
+    slug: "lakeview-bowls",
+    status: "ONBOARDING",
+    active: false,
+    goLiveAt: null,
+    locale: "en",
+    brandColor: "#16a34a",
+    country: "GB",
+    organisationType: "CIO",
+    financialYearEndMonth: 3,
+    financialYearEndDay: 31,
+    vertical: "BOWLS",
+    latitude: 51.5,
+    longitude: -0.1,
+    locality: "Lakeview",
+    timezone: "Europe/London",
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   jest.mocked(logAudit).mockClear();
+  prismaMock.tenant.findUnique.mockResolvedValue(onboardingTenant() as never);
+  prismaMock.tenant.findFirst.mockResolvedValue(onboardingTenant() as never);
   signInAs({ id: "admin-1", role: "TENANT_ADMIN", tenantId: TENANT });
   // create / update / upsert echo the row they were asked to write.
   prismaMock.onboardingProgress.create.mockImplementation((async ({ data }: any) => progressRow(data)) as never);
@@ -54,6 +84,8 @@ describe("/api/onboarding/progress", () => {
     });
   });
 
+  // Corrected for B-83: the tenant fixture now carries chapter 1's data (name +
+  // a real slug), so marking it complete is legitimate, not just client-asserted.
   test("POST advances current chapter and marks complete", async () => {
     prismaMock.onboardingProgress.findUnique.mockResolvedValue(progressRow() as never);
 
@@ -89,6 +121,39 @@ describe("/api/onboarding/progress", () => {
     expect(prismaMock.onboardingProgress.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ update: expect.objectContaining({ completedAt: null }) }),
     );
+  });
+
+  test("[B-83] FR-ONB-005 – a chapter can't be marked complete while its required data is missing (no slug chosen)", async () => {
+    // Chapter 1 (About) requires a real public slug; this one is still the placeholder.
+    prismaMock.tenant.findUnique.mockResolvedValue(onboardingTenant({ slug: "t-1a2b3c4d" }) as never);
+    prismaMock.tenant.findFirst.mockResolvedValue(onboardingTenant({ slug: "t-1a2b3c4d" }) as never);
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(progressRow() as never);
+
+    const { status, body } = await postProgress({ chapter: 1, markComplete: true });
+
+    // Either rejected outright, or accepted without recording chapter 1 as complete.
+    if (status !== 400) {
+      expect(status).toBe(200);
+      expect(body.completedChapters).not.toContain(1);
+    }
+    const written = [
+      ...prismaMock.onboardingProgress.upsert.mock.calls.map((c: any) => c[0].update?.completedChapters),
+      ...prismaMock.onboardingProgress.update.mock.calls.map((c: any) => c[0].data?.completedChapters),
+    ].filter(Boolean);
+    for (const json of written) expect(JSON.parse(json)).not.toContain(1);
+    expect(logAudit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "onboarding.chapter.completed" }));
+  });
+
+  test("[B-83] FR-ONB-008 – GET progress for an ACTIVE (live) tenant creates no progress row", async () => {
+    const live = onboardingTenant({ status: "ACTIVE", active: true, goLiveAt: new Date(Date.now() - 86_400_000) });
+    prismaMock.tenant.findUnique.mockResolvedValue(live as never);
+    prismaMock.tenant.findFirst.mockResolvedValue(live as never);
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(null);
+
+    await GET(request("/api/onboarding/progress"));
+
+    expect(prismaMock.onboardingProgress.create).not.toHaveBeenCalled();
+    expect(prismaMock.onboardingProgress.upsert).not.toHaveBeenCalled();
   });
 
   test.each([99, 0])("POST rejects out-of-range chapter %p with 400", async (chapter) => {

@@ -14,7 +14,27 @@ const RINK = "rink-a";
 
 const book = (body: Record<string, unknown>) => POST(jsonRequest("POST", "/api/bookings", body));
 
+/** Existing slots on the rink, each with its booking's status. Honours the status filter the route asks for. */
+function givenExistingSlots(slots: { id: string; rinkId: string; timeSlot: string; status: string }[]) {
+  const matching = (args: any) => {
+    const m = JSON.stringify(args ?? {}).match(/"status":\{"in":\[([^\]]*)\]\}/);
+    const allowed = m ? (JSON.parse(`[${m[1]}]`) as string[]) : null;
+    const where = args?.where ?? {};
+    return slots
+      .filter((s) => !allowed || allowed.includes(s.status))
+      .filter((s) => (where.rinkId ? where.rinkId === s.rinkId : true))
+      .filter((s) => (where.timeSlot ? where.timeSlot === s.timeSlot : true))
+      .map((s) => ({ id: s.id, rinkId: s.rinkId, timeSlot: s.timeSlot, bookingId: `b-${s.id}`, booking: { id: `b-${s.id}`, status: s.status } }));
+  };
+  prismaMock.bookingSlot.findFirst.mockImplementation((async (args: any) => matching(args)[0] ?? null) as never);
+  prismaMock.bookingSlot.findMany.mockImplementation((async (args: any) => matching(args)) as never);
+}
+
 beforeEach(() => {
+  // The club's opening hours (schema defaults) and timezone.
+  const tenant = { id: TENANT, name: "Club", slug: "club", active: true, status: "ACTIVE", openingTime: "08:00", closingTime: "20:00", timezone: "Europe/London" };
+  prismaMock.tenant.findUnique.mockResolvedValue(tenant as never);
+  prismaMock.tenant.findFirst.mockResolvedValue(tenant as never);
   // The rink belongs to an open green (no season configured) in the caller's tenant.
   prismaMock.rink.findMany.mockResolvedValue([
     {
@@ -147,22 +167,24 @@ describe("POST /api/bookings - admin override", () => {
     expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
 
-  test("an APPROVED booking in the slot blocks a normal booking (409)", async () => {
+  test.each(["RESERVED", "CONFIRMED"])("[B-41] FR-BOOK-009 – a %s booking in the slot blocks a normal booking (409)", async (held) => {
     signInAs(ADMIN);
-    const date = isoDateFromToday(33);
-    prismaMock.bookingSlot.findFirst.mockResolvedValue({ id: "existing-slot" } as never);
+    givenExistingSlots([{ id: "existing-slot", rinkId: RINK, timeSlot: "14:00", status: held }]);
 
-    const { status } = await readJson(await book({ date, slots: [{ rinkId: RINK, timeSlot: "14:00" }] }));
+    const { status } = await readJson(await book({ date: isoDateFromToday(33), slots: [{ rinkId: RINK, timeSlot: "14:00" }] }));
 
     expect(status).toBe(409);
-    expect(prismaMock.bookingSlot.findFirst).toHaveBeenCalledWith({
-      where: {
-        rinkId: RINK,
-        timeSlot: "14:00",
-        booking: { date, status: { in: ["APPROVED", "RESERVED", "CONFIRMED"] }, tenantId: TENANT },
-      },
-    });
     expect(prismaMock.booking.create).not.toHaveBeenCalled();
+  });
+
+  test.each(["APPROVED", "REQUESTED"])("[B-41] FR-BOOK-009 / D-02 – an existing %s booking in the slot doesn't cause a clash (201)", async (existing) => {
+    signInAs(ADMIN);
+    givenExistingSlots([{ id: "existing-slot", rinkId: RINK, timeSlot: "14:00", status: existing }]);
+
+    const { status } = await readJson(await book({ date: isoDateFromToday(33), slots: [{ rinkId: RINK, timeSlot: "14:00" }] }));
+
+    expect(status).toBe(201);
+    expect(prismaMock.booking.create).toHaveBeenCalled();
   });
 
   test("admin override bypasses conflict check", async () => {
@@ -181,7 +203,8 @@ describe("POST /api/bookings - admin override", () => {
     expect(status).toBe(201);
     expect(body.adminOverride).toBe(true);
     expect(body.overrideReason).toBe("Emergency coaching session");
-    expect(prismaMock.bookingSlot.findFirst).not.toHaveBeenCalled();
+    // (No "conflict lookup not called" assertion: B-46 needs the fix to find
+    // the displaced booking so its owner can be notified.)
   });
 });
 

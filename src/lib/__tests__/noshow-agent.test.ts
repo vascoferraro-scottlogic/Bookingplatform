@@ -222,6 +222,96 @@ describe("NoShowRiskAgent — prediction persistence", () => {
   });
 });
 
+// ── Coverage and configuration (B-56) ─────────────────────────────────────────
+
+describe("NoShowRiskAgent — every upcoming booking, valid threshold", () => {
+  /** Field equality, `{ in }`, and range operators: the `where` subset a booking query uses. */
+  const matches = (row: Record<string, any>, where: Record<string, any> = {}): boolean =>
+    Object.entries(where).every(([k, v]) => {
+      if (v === undefined) return true;
+      if (k === "AND") return ([] as any[]).concat(v).every((c) => matches(row, c));
+      if (k === "OR") return (v as any[]).some((c) => matches(row, c));
+      if (v && typeof v === "object" && !(v instanceof Date)) {
+        return Object.entries(v).every(([op, x]: [string, any]) => {
+          const cur = row[k];
+          switch (op) {
+            case "in": return x.includes(cur);
+            case "notIn": return !x.includes(cur);
+            case "not": return cur !== x;
+            case "gt": return cur > x;
+            case "gte": return cur >= x;
+            case "lt": return cur < x;
+            case "lte": return cur <= x;
+            case "equals": return cur === x;
+            default: return true;
+          }
+        });
+      }
+      return row[k] === v;
+    });
+
+  /** booking.findMany honouring where, orderBy, cursor, skip and take, as Prisma does. */
+  function servePagedBookings() {
+    prismaMock.booking.findMany.mockImplementation((async (a: any = {}) => {
+      const order: Array<[string, "asc" | "desc"]> = ([] as any[])
+        .concat(a.orderBy ?? [])
+        .flatMap((o: Record<string, "asc" | "desc">) => Object.entries(o));
+      order.push(["id", "asc"]);
+      let rows = bookings
+        .filter((b) => matches(b, a.where))
+        .sort((x: any, y: any) => {
+          for (const [field, dir] of order) {
+            if (x[field] === y[field]) continue;
+            return (x[field] < y[field] ? -1 : 1) * (dir === "desc" ? -1 : 1);
+          }
+          return 0;
+        });
+      if (a.cursor) {
+        const i = rows.findIndex((r) => matches(r, a.cursor));
+        rows = i < 0 ? [] : rows.slice(i);
+      }
+      if (a.skip) rows = rows.slice(a.skip);
+      if (a.take !== undefined) rows = rows.slice(0, a.take);
+      return rows;
+    }) as never);
+  }
+
+  test("[B-56] FR-BOOK-015 – with 120 upcoming bookings, all 120 are scored (not just the first 50)", async () => {
+    servePagedBookings();
+    predictMock.mockResolvedValue({ probability: 0.1, modelVersion: "noshow-v1" });
+    const ids = Array.from({ length: 120 }, (_, i) => createUpcomingBooking(1 + (i % 28)));
+
+    const run = await new NoShowRiskAgent().runForTenant(tenantId);
+
+    expect(run.status).toBe(AgentRunStatus.COMPLETED);
+    const scored = new Set(
+      prismaMock.bookingNoShowPrediction.upsert.mock.calls.map((c) => (c[0] as any).where.bookingId_modelVersion.bookingId),
+    );
+    expect(scored.size).toBe(120);
+    expect([...scored].sort()).toEqual([...ids].sort());
+  });
+
+  test("[B-56] FR-BOOK-015 – a configured threshold outside 0–1 (40) is rejected or clamped, never 'never triggers'", async () => {
+    prismaMock.agentConfig.findUnique.mockResolvedValue({
+      agentId: NO_SHOW.id,
+      tenantId,
+      config: JSON.stringify({ riskThreshold: 40 }),
+      enabled: true,
+    } as never);
+    // Certain no-show: flagged under any valid threshold (including one clamped to 1.0).
+    predictMock.mockResolvedValue({ probability: 1, modelVersion: "noshow-v1" });
+    createUpcomingBooking(3);
+
+    const run = await new NoShowRiskAgent().runForTenant(tenantId);
+
+    // Either the run refuses the invalid configuration, or the threshold is
+    // brought into range and the booking is flagged.
+    const rejected = run.status === AgentRunStatus.FAILED;
+    const flagged = proposals().length === 1;
+    expect({ rejected, flagged }).not.toEqual({ rejected: false, flagged: false });
+  });
+});
+
 // ── booking-noshow-reminder committer ─────────────────────────────────────────
 
 describe("booking-noshow-reminder committer", () => {

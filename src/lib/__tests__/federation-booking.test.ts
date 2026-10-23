@@ -30,15 +30,48 @@ function grantPermissions(...permissions: string[]) {
     permissions.includes(args.where.group.grants.some.permission) ? { id: "gm-1" } : null) as never);
 }
 
+const tenantRow = (id: string, over: Record<string, unknown> = {}) => ({
+  id,
+  name: id === HOME ? "Home Club" : "Away Club",
+  slug: id,
+  active: true,
+  status: "ACTIVE",
+  openingTime: "08:00",
+  closingTime: "20:00",
+  timezone: "Europe/London",
+  ...over,
+});
+
+/** The user's existing bookings on the day. Honours a tenantId filter (equals / not / notIn) if the route sends one. */
+function givenUserBookings(bookings: { id: string; tenantId: string; tenantName: string; timeSlot: string }[]) {
+  prismaMock.booking.findMany.mockImplementation((async (args: any) => {
+    const t = args?.where?.tenantId ?? args?.where?.NOT?.tenantId;
+    const negate = args?.where?.tenantId === undefined && args?.where?.NOT?.tenantId !== undefined;
+    const keep = (tenantId: string) => {
+      if (t === undefined) return true;
+      let match: boolean;
+      if (typeof t === "string") match = tenantId === t;
+      else if (t.not !== undefined) match = tenantId !== t.not;
+      else if (t.notIn !== undefined) match = !t.notIn.includes(tenantId);
+      else if (t.in !== undefined) match = t.in.includes(tenantId);
+      else match = true;
+      return negate ? !match : match;
+    };
+    return bookings
+      .filter((b) => keep(b.tenantId))
+      .map((b) => ({ id: b.id, tenantId: b.tenantId, status: "CONFIRMED", slots: [{ timeSlot: b.timeSlot }], tenant: { name: b.tenantName } }));
+  }) as never);
+}
+
 beforeEach(() => {
-  // Federation flag is on for the home club.
+  // Federation flag is on for both clubs.
   prismaMock.featureFlag.findUnique.mockImplementation((async (args: any) => {
     const { tenantId, key } = args.where.tenantId_key;
-    return tenantId === HOME && key === "federation" ? { tenantId, key, enabled: true } : null;
+    return [HOME, AWAY].includes(tenantId) && key === "federation" ? { tenantId, key, enabled: true } : null;
   }) as never);
-  // Away club exists.
+  // Both clubs exist and are ACTIVE.
   prismaMock.tenant.findUnique.mockImplementation((async (args: any) =>
-    args.where.id === AWAY ? { id: AWAY } : null) as never);
+    [HOME, AWAY].includes(args.where.id) ? tenantRow(args.where.id) : null) as never);
   // Home user is in a group granting federation_book_at_partners.
   grantPermissions("federation_book_at_partners");
   // Both clubs are active members of FED.
@@ -163,45 +196,69 @@ describe("Cross-club booking via federation", () => {
     });
     expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
+
+  test("[B-55] FR-BOOK-017 – booking at a partner club that is SUSPENDED → 403", async () => {
+    signInAs(HOME_USER);
+    prismaMock.tenant.findUnique.mockImplementation((async (args: any) =>
+      args.where.id === AWAY ? tenantRow(AWAY, { status: "SUSPENDED" }) : args.where.id === HOME ? tenantRow(HOME) : null) as never);
+
+    const { status } = await readJson(
+      await book({ date: isoDateFromToday(34), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] }),
+    );
+
+    expect(status).toBe(403);
+    expect(prismaMock.booking.create).not.toHaveBeenCalled();
+  });
+
+  test("[B-55] FR-BOOK-017 – booking at a partner club with its federation flag off → 403", async () => {
+    signInAs(HOME_USER);
+    prismaMock.featureFlag.findUnique.mockImplementation((async (args: any) => {
+      const { tenantId, key } = args.where.tenantId_key;
+      return tenantId === HOME && key === "federation" ? { tenantId, key, enabled: true } : { tenantId, key, enabled: false };
+    }) as never);
+
+    const { status } = await readJson(
+      await book({ date: isoDateFromToday(34), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] }),
+    );
+
+    expect(status).toBe(403);
+    expect(prismaMock.booking.create).not.toHaveBeenCalled();
+  });
 });
 
 // ── Cross-club clash detection ────────────────────────────────
 
 describe("Cross-club clash detection", () => {
-  /** The user already holds a 14:00-16:00 booking at the home club on `date`. */
-  function existingHomeBooking() {
-    prismaMock.booking.findMany.mockResolvedValue([
-      { id: "home-booking", slots: [{ timeSlot: "14:00-16:00" }], tenant: { name: "Home Club" } },
-    ] as never);
+  /** The user already holds a booking at the home club on the day. */
+  function existingHomeBooking(timeSlot = "14:00") {
+    givenUserBookings([{ id: "home-booking", tenantId: HOME, tenantName: "Home Club", timeSlot }]);
   }
 
   test("same slot at different clubs returns CROSS_CLUB_CLASH", async () => {
     signInAs(HOME_USER);
-    existingHomeBooking();
+    existingHomeBooking("14:00");
     const date = isoDateFromToday(40);
 
     const { status, body } = await readJson(
-      await book({ date, targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "14:00-16:00" }] }),
+      await book({ date, targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "14:00" }] }),
     );
 
     expect(status).toBe(409);
     expect(body.error).toBe("CROSS_CLUB_CLASH");
     expect(body.confirm).toBe(true);
-    expect(body.existingBooking).toEqual({ id: "home-booking", tenantName: "Home Club", timeSlot: "14:00-16:00" });
+    expect(body.existingBooking).toEqual({ id: "home-booking", tenantName: "Home Club", timeSlot: "14:00" });
     expect(prismaMock.booking.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: HOME_USER.id, date, status: { in: ["APPROVED", "RESERVED", "CONFIRMED", "REQUESTED"] } },
-      }),
+      expect.objectContaining({ where: expect.objectContaining({ userId: HOME_USER.id, date }) }),
     );
     expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
 
-  test("adjacent slot returns CROSS_CLUB_CONSECUTIVE", async () => {
+  test("[B-54] FR-FED-003 – 09:00 at one club then 10:00 at another returns CROSS_CLUB_CONSECUTIVE", async () => {
     signInAs(HOME_USER);
-    existingHomeBooking();
+    existingHomeBooking("09:00");
 
     const { status, body } = await readJson(
-      await book({ date: isoDateFromToday(40), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "16:00-18:00" }] }),
+      await book({ date: isoDateFromToday(40), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] }),
     );
 
     expect(status).toBe(409);
@@ -210,16 +267,29 @@ describe("Cross-club clash detection", () => {
     expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
 
+  test("[B-54] FR-FED-003 – a booking at the same club as the user's other booking gives no cross-club warning (201)", async () => {
+    signInAs(HOME_USER);
+    // The user's other booking that day is at the AWAY club too (another rink, same time).
+    givenUserBookings([{ id: "away-booking", tenantId: AWAY, tenantName: "Away Club", timeSlot: "14:00" }]);
+
+    const { status } = await readJson(
+      await book({ date: isoDateFromToday(40), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "14:00" }] }),
+    );
+
+    expect(status).toBe(201);
+    expect(prismaMock.booking.create).toHaveBeenCalled();
+  });
+
   test("confirmClash bypasses clash warning", async () => {
     signInAs(HOME_USER);
-    existingHomeBooking();
+    existingHomeBooking("14:00");
 
     const { status } = await readJson(
       await book({
         date: isoDateFromToday(40),
         targetTenantId: AWAY,
         confirmClash: true,
-        slots: [{ rinkId: AWAY_RINK, timeSlot: "14:00-16:00" }],
+        slots: [{ rinkId: AWAY_RINK, timeSlot: "14:00" }],
       }),
     );
 

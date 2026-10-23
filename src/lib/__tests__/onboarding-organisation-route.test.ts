@@ -8,7 +8,7 @@ import { signInAs, signOut } from "@/test-utils/session";
 import { jsonRequest, readJson } from "@/test-utils/http";
 import { logAudit } from "@/lib/audit";
 import { seedCharityDefaults } from "@/lib/charity/seed";
-import { CHARITY_FEATURE_KEY } from "@/lib/charity/feature-gate";
+import { CHARITY_FEATURE_KEY, checkCharityGate } from "@/lib/charity/feature-gate";
 import { PATCH } from "@/app/api/onboarding/organisation/route";
 
 const TENANT = "t1";
@@ -23,6 +23,20 @@ const charityFlagUpsert = (tenantId: string) =>
     where: { tenantId_key: { tenantId, key: CHARITY_FEATURE_KEY } },
     update: { enabled: true },
   });
+
+/** Every write that sets the charity flag, as the enabled value written. */
+function charityFlagWrites(): boolean[] {
+  const isCharity = (a: any) =>
+    a?.where?.tenantId_key?.key === CHARITY_FEATURE_KEY || a?.where?.key === CHARITY_FEATURE_KEY ||
+    a?.data?.key === CHARITY_FEATURE_KEY || a?.create?.key === CHARITY_FEATURE_KEY;
+  const out: boolean[] = [];
+  for (const [a] of prismaMock.featureFlag.upsert.mock.calls as any[]) if (isCharity(a)) out.push(a.update?.enabled);
+  for (const [a] of prismaMock.featureFlag.update.mock.calls as any[]) if (isCharity(a)) out.push(a.data?.enabled);
+  for (const [a] of prismaMock.featureFlag.updateMany.mock.calls as any[]) if (isCharity(a)) out.push(a.data?.enabled);
+  for (const [a] of prismaMock.featureFlag.delete.mock.calls as any[]) if (isCharity(a)) out.push(false);
+  for (const [a] of prismaMock.featureFlag.deleteMany.mock.calls as any[]) if (isCharity(a)) out.push(false);
+  return out;
+}
 
 beforeEach(() => {
   jest.mocked(logAudit).mockClear();
@@ -111,7 +125,8 @@ describe("/api/onboarding/organisation PATCH", () => {
     expect(status).toBe(200);
     expect(body.charityEnabled).toBe(false);
     expect(body.charitySettingsSeeded).toBe(false);
-    expect(prismaMock.featureFlag.upsert).not.toHaveBeenCalled();
+    // Corrected for B-80: a fix may write the flag OFF (recompute); it must never write it ON.
+    expect(charityFlagWrites()).not.toContain(true);
     expect(prismaMock.charitySettings.create).not.toHaveBeenCalled();
     expect(seedCharityDefaults).not.toHaveBeenCalled();
   });
@@ -143,5 +158,64 @@ describe("/api/onboarding/organisation PATCH", () => {
 
     expect(status).toBe(401);
     expect(prismaMock.tenant.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("[B-80] charity eligibility follows legal form", () => {
+  test("[B-80] FR-CHA-001 – CASC + GB is not charity-eligible: charity is not enabled or seeded", async () => {
+    const { status, body } = await patch({ country: "GB", organisationType: "CASC", financialYearEndMonth: 12, financialYearEndDay: 31 });
+
+    expect(status).toBe(200);
+    expect(body.charityEnabled).toBe(false);
+    expect(charityFlagWrites()).not.toContain(true);
+    expect(prismaMock.charitySettings.create).not.toHaveBeenCalled();
+    expect(seedCharityDefaults).not.toHaveBeenCalled();
+  });
+
+  test("[B-80] FR-CHA-001 – changing legal form from CIO to LIMITED_COMPANY disables the charity flag", async () => {
+    prismaMock.tenant.findUnique.mockResolvedValue({
+      country: "GB",
+      organisationType: "CIO",
+      financialYearEndMonth: 3,
+      financialYearEndDay: 31,
+      vertical: "BOWLS",
+    } as never);
+    // Charity was switched on when the tenant was a CIO.
+    prismaMock.featureFlag.findUnique.mockResolvedValue({ tenantId: TENANT, key: CHARITY_FEATURE_KEY, enabled: true } as never);
+    prismaMock.charitySettings.findUnique.mockResolvedValue({ tenantId: TENANT, regulator: "CC_EW" } as never);
+
+    const { status, body } = await patch({ ...validBody, organisationType: "LIMITED_COMPANY" });
+
+    expect(status).toBe(200);
+    expect(body.charityEnabled).toBe(false);
+    const writes = charityFlagWrites();
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes[writes.length - 1]).toBe(false);
+  });
+});
+
+describe("checkCharityGate (src/lib/charity/feature-gate.ts)", () => {
+  const flagOn = () =>
+    prismaMock.featureFlag.findUnique.mockResolvedValue({ tenantId: TENANT, key: CHARITY_FEATURE_KEY, enabled: true } as never);
+
+  test.each(["LIMITED_COMPANY", "CASC", "PRIVATE_MEMBERS_CLUB"])(
+    "[B-80] FR-ONB-007 – refuses a %s tenant even when the charity flag is on",
+    async (organisationType) => {
+      prismaMock.tenant.findUnique.mockResolvedValue({ id: TENANT, country: "GB", organisationType } as never);
+      flagOn();
+
+      const result = await checkCharityGate(TENANT);
+
+      expect(result.ok).toBe(false);
+    },
+  );
+
+  test("[B-80] FR-ONB-007 – allows a GB CIO tenant with the charity flag on", async () => {
+    prismaMock.tenant.findUnique.mockResolvedValue({ id: TENANT, country: "GB", organisationType: "CIO" } as never);
+    flagOn();
+
+    const result = await checkCharityGate(TENANT);
+
+    expect(result).toEqual(expect.objectContaining({ ok: true, tenantId: TENANT }));
   });
 });

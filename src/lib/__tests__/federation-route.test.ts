@@ -1,6 +1,7 @@
 jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
 jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
+import { Prisma } from "@prisma/client";
 import { prismaMock } from "@/test-utils/prisma-mock";
 import { signInAs } from "@/test-utils/session";
 import { jsonRequest, readJson, request, routeParams } from "@/test-utils/http";
@@ -331,6 +332,165 @@ describe("POST /api/federations/[id]/leave", () => {
       where: { federationId: FED, tenantId: T2, leftAt: null },
     });
     expect(prismaMock.federationMembership.update).not.toHaveBeenCalled();
+  });
+});
+
+// ── Rejoin and re-invite (stateful) ─────────────────────
+
+describe("Federation rejoin after leaving", () => {
+  /** Field equality, `{ in }`, `{ gt/gte/lt/lte }`, null, and compound keys such as federationId_tenantId. */
+  const matches = (row: Record<string, any>, where: Record<string, any> = {}): boolean =>
+    Object.entries(where).every(([k, v]) => {
+      if (v === undefined) return true;
+      if (row[k] === undefined && k.includes("_") && v && typeof v === "object") return matches(row, v);
+      if (v === null) return row[k] == null;
+      if (v instanceof Date) return row[k] instanceof Date && row[k].getTime() === v.getTime();
+      if (typeof v === "object") {
+        return Object.entries(v).every(([op, x]: [string, any]) => {
+          const cur = row[k];
+          switch (op) {
+            case "in": return x.includes(cur);
+            case "notIn": return !x.includes(cur);
+            case "not": return x === null ? cur != null : cur !== x;
+            case "gt": return cur != null && cur > x;
+            case "gte": return cur != null && cur >= x;
+            case "lt": return cur != null && cur < x;
+            case "lte": return cur != null && cur <= x;
+            case "equals": return cur === x;
+            default: return true;
+          }
+        });
+      }
+      return row[k] === v;
+    });
+
+  let memberships: Record<string, any>[];
+  let invites: Record<string, any>[];
+  let seq = 0;
+
+  function serveTables() {
+    const fm = prismaMock.federationMembership;
+    const findOne = (async (a: any = {}) => memberships.find((m) => matches(m, a.where)) ?? null) as never;
+    fm.findFirst.mockImplementation(findOne);
+    fm.findUnique.mockImplementation(findOne);
+    fm.findMany.mockImplementation((async (a: any = {}) => memberships.filter((m) => matches(m, a.where))) as never);
+    fm.count.mockImplementation((async (a: any = {}) => memberships.filter((m) => matches(m, a.where)).length) as never);
+    fm.create.mockImplementation((async ({ data }: any) => {
+      if (memberships.some((m) => m.federationId === data.federationId && m.tenantId === data.tenantId)) {
+        throw new Prisma.PrismaClientKnownRequestError(
+          "Unique constraint failed on the fields: (`federationId`,`tenantId`)",
+          { code: "P2002", clientVersion: "test" },
+        );
+      }
+      const row = { id: `fm-new-${++seq}`, joinedAt: new Date(), leftAt: null, billingMode: "HOST_CLUB_RATE", ...data };
+      memberships.push(row);
+      return row;
+    }) as never);
+    fm.update.mockImplementation((async ({ where, data }: any) => {
+      const row = memberships.find((m) => matches(m, where));
+      if (!row) throw new Error("Record to update not found");
+      Object.assign(row, data);
+      return row;
+    }) as never);
+    fm.updateMany.mockImplementation((async ({ where, data }: any) => {
+      const rows = memberships.filter((m) => matches(m, where));
+      rows.forEach((r) => Object.assign(r, data));
+      return { count: rows.length };
+    }) as never);
+    fm.upsert.mockImplementation((async ({ where, create, update }: any) => {
+      const row = memberships.find((m) => matches(m, where));
+      if (row) return Object.assign(row, update);
+      const created = { id: `fm-new-${++seq}`, joinedAt: new Date(), leftAt: null, ...create };
+      memberships.push(created);
+      return created;
+    }) as never);
+
+    const fi = prismaMock.federationInvite;
+    const withFederation = (i: any) => (i ? { ...i, federation: federationRow } : null);
+    fi.findUnique.mockImplementation((async (a: any = {}) => withFederation(invites.find((i) => matches(i, a.where)))) as never);
+    fi.findFirst.mockImplementation((async (a: any = {}) => withFederation(invites.find((i) => matches(i, a.where)))) as never);
+    fi.findMany.mockImplementation((async (a: any = {}) => invites.filter((i) => matches(i, a.where))) as never);
+    fi.count.mockImplementation((async (a: any = {}) => invites.filter((i) => matches(i, a.where)).length) as never);
+    fi.update.mockImplementation((async ({ where, data }: any) => Object.assign(invites.find((i) => matches(i, where))!, data)) as never);
+    fi.updateMany.mockImplementation((async ({ where, data }: any) => {
+      const rows = invites.filter((i) => matches(i, where));
+      rows.forEach((r) => Object.assign(r, data));
+      return { count: rows.length };
+    }) as never);
+    fi.create.mockImplementation((async ({ data }: any) => {
+      const row = { id: `inv-new-${++seq}`, token: `tok-${seq}`, status: "PENDING", createdAt: new Date(), ...data };
+      invites.push(row);
+      return { ...row, inviteeTenant: { id: T2, name: "Fed Club 2", slug: SLUG2, locality: null } };
+    }) as never);
+
+    prismaMock.federation.findUnique.mockResolvedValue(federationRow as never);
+    prismaMock.tenant.findUnique.mockImplementation((async (args: any) =>
+      args.where.slug === SLUG2 || args.where.id === T2 ? { id: T2, slug: SLUG2, name: "Fed Club 2" } : null) as never);
+  }
+
+  /** Calls a handler, turning an uncaught throw into the 500 Next would send. */
+  async function call(fn: () => Promise<Response>) {
+    try {
+      return await readJson(await fn());
+    } catch (e) {
+      return { status: 500, body: { thrown: String(e) } as any };
+    }
+  }
+
+  beforeEach(() => {
+    seq = 0;
+    memberships = [{ id: "fm-1", federationId: FED, tenantId: T1, leftAt: null, joinedAt: new Date(), billingMode: "HOST_CLUB_RATE" }];
+    invites = [];
+    serveTables();
+  });
+
+  test("[B-72] FR-FED-001 – a club that left can accept a new invite: 200 and its membership is reactivated", async () => {
+    // T2 joined earlier and left; the (federationId, tenantId) row still exists.
+    memberships.push({
+      id: "fm-2", federationId: FED, tenantId: T2, billingMode: "HOST_CLUB_RATE",
+      joinedAt: hoursFromNow(-24 * 60), leftAt: hoursFromNow(-24 * 7),
+    });
+    invites.push({
+      id: "inv-rejoin", token: TOKEN, federationId: FED, inviterTenantId: T1, inviteeTenantId: T2,
+      status: "PENDING", expiresAt: hoursFromNow(14 * 24), createdAt: new Date(),
+    });
+    signInAs(ADMIN2);
+
+    const { status } = await call(() => ACCEPT(request("/", { method: "POST" }), tokenParams(TOKEN)));
+
+    expect(status).toBe(200);
+    const t2Rows = memberships.filter((m) => m.federationId === FED && m.tenantId === T2);
+    expect(t2Rows).toHaveLength(1);
+    expect(t2Rows[0].leftAt).toBeNull();
+    expect(invites[0].status).toBe("ACCEPTED");
+  });
+
+  test("[B-72] FR-FED-001 – an expired PENDING invite does not block issuing a new invite", async () => {
+    invites.push({
+      id: "inv-stale", token: "stale-token", federationId: FED, inviterTenantId: T1, inviteeTenantId: T2,
+      status: "PENDING", expiresAt: hoursFromNow(-24), createdAt: hoursFromNow(-24 * 15),
+    });
+    signInAs(ADMIN1);
+
+    const { status } = await call(() => INVITE(post({ tenantSlug: SLUG2 }), idParams(FED)));
+
+    expect(status).toBe(201);
+    expect(prismaMock.federationInvite.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ federationId: FED, inviteeTenantId: T2 }) }),
+    );
+  });
+
+  test("[B-72] FR-FED-001 – an unexpired PENDING invite still blocks a duplicate invite (409)", async () => {
+    invites.push({
+      id: "inv-live", token: "live-token", federationId: FED, inviterTenantId: T1, inviteeTenantId: T2,
+      status: "PENDING", expiresAt: hoursFromNow(24 * 7), createdAt: hoursFromNow(-24 * 2),
+    });
+    signInAs(ADMIN1);
+
+    const { status } = await call(() => INVITE(post({ tenantSlug: SLUG2 }), idParams(FED)));
+
+    expect(status).toBe(409);
+    expect(prismaMock.federationInvite.create).not.toHaveBeenCalled();
   });
 });
 

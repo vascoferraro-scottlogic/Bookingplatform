@@ -99,19 +99,33 @@ describe("isFeatureEnabled router", () => {
 });
 
 describe("flagIsOn", () => {
-  test("platform flag + Unleash configured → targeted via buildContext", async () => {
+  // Corrected for B-16: this test used to assert that flagIsOn evaluates with a
+  // per-user buildContext context, which is exactly the UI/API divergence.
+  test("[B-16] NFR-09 – flagIsOn (UI path) evaluates a platform flag with the same context as isFeatureEnabled (API path)", async () => {
     const client = fakeClient(true);
     unleashMod.getUnleash.mockReturnValue(client);
     contextMod.buildContext.mockResolvedValue({ userId: "u1", properties: { role: "TENANT_ADMIN" } });
 
-    const result = await flagIsOn("noShowPrediction", adminSession);
+    const apiResult = await isFeatureEnabled("t1", "noShowPrediction");
+    const uiResult = await flagIsOn("noShowPrediction", adminSession);
 
-    expect(result).toBe(true);
-    expect(contextMod.buildContext).toHaveBeenCalledWith(adminSession, undefined);
-    expect(client.isEnabled).toHaveBeenCalledWith("noShowPrediction", {
-      userId: "u1",
-      properties: { role: "TENANT_ADMIN" },
-    });
+    expect(uiResult).toBe(apiResult);
+    expect(client.isEnabled).toHaveBeenCalledTimes(2);
+    const [[apiKey, apiContext], [uiKey, uiContext]] = client.isEnabled.mock.calls;
+    expect(uiKey).toBe(apiKey);
+    expect(uiContext).toEqual(apiContext);
+  });
+
+  test("[B-16] NFR-09 – UI and API paths agree when Unleash would give different answers per user vs per tenant", async () => {
+    // A per-user rollout: on for userId "u1", off for anything else.
+    const client = { isEnabled: jest.fn((_key: string, ctx: any) => ctx?.userId === "u1") };
+    unleashMod.getUnleash.mockReturnValue(client);
+    contextMod.buildContext.mockResolvedValue({ userId: "u1", properties: { role: "TENANT_ADMIN", tenantId: "t1" } });
+
+    const apiResult = await isFeatureEnabled("t1", "federation");
+    const uiResult = await flagIsOn("federation", adminSession);
+
+    expect(uiResult).toBe(apiResult);
   });
 
   test("platform flag + Unleash NOT configured → Postgres fallback on effective tenant", async () => {
@@ -135,10 +149,16 @@ describe("flagIsOn", () => {
 });
 
 describe("evaluatePlatformFlags", () => {
-  test("Unleash configured → builds context once, evaluates each platform key, ignores non-platform keys", async () => {
+  // Corrected for B-16: previously asserted the per-user buildContext context
+  // (the UI nav path), which diverges from the per-tenant API path.
+  test("[B-16] NFR-09 – Unleash configured → evaluates each platform key with the same context as isFeatureEnabled, ignores non-platform keys", async () => {
     const client = fakeClient(true);
     unleashMod.getUnleash.mockReturnValue(client);
     contextMod.buildContext.mockResolvedValue({ userId: "u1", properties: { role: "TENANT_ADMIN" } });
+
+    await isFeatureEnabled("t1", "federation");
+    const apiContext = client.isEnabled.mock.calls[0][1];
+    client.isEnabled.mockClear();
 
     const result = await evaluatePlatformFlags(adminSession, undefined, [
       "federation",
@@ -147,10 +167,9 @@ describe("evaluatePlatformFlags", () => {
     ]);
 
     expect(result).toEqual({ federation: true, businessInsights: true });
-    expect(contextMod.buildContext).toHaveBeenCalledTimes(1);
     expect(client.isEnabled).toHaveBeenCalledTimes(2);
-    expect(client.isEnabled).toHaveBeenCalledWith("federation", { userId: "u1", properties: { role: "TENANT_ADMIN" } });
-    expect(client.isEnabled).toHaveBeenCalledWith("businessInsights", { userId: "u1", properties: { role: "TENANT_ADMIN" } });
+    expect(client.isEnabled).toHaveBeenCalledWith("federation", apiContext);
+    expect(client.isEnabled).toHaveBeenCalledWith("businessInsights", apiContext);
   });
 
   test("Unleash NOT configured + session → Postgres fallback per platform key on effective tenant", async () => {

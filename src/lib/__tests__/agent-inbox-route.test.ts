@@ -278,3 +278,34 @@ describe("POST /api/agent/proposals/[id]/reject", () => {
     expect(prismaMock.agentProposal.update).not.toHaveBeenCalled();
   });
 });
+
+describe("[B-08] approve/reject — platform plane has no implicit tenant powers", () => {
+  const asPlatformAdmin = () => signInAs({ id: "platform-1", role: "PLATFORM_ADMIN", tenantId: null, actingAs: null });
+
+  test("[B-08] FR-SEC-003 – a non-impersonating PLATFORM_ADMIN approving a proposal gets 403 PLATFORM_ADMIN_NO_CONTEXT", async () => {
+    givenProposal();
+    asPlatformAdmin();
+
+    const { status, body } = await readJson(
+      await approvePOST(jsonRequest("POST", "/api/agent/proposals/p1/approve", {}), routeParams({ id: "p1" })),
+    );
+
+    expect(status).toBe(403);
+    expect(body.error).toBe("PLATFORM_ADMIN_NO_CONTEXT");
+    expect(prismaMock.maintenanceTask.create).not.toHaveBeenCalled();
+    expect(prismaMock.agentProposal.update).not.toHaveBeenCalled();
+  });
+
+  test("[B-08] FR-SEC-003 – a non-impersonating PLATFORM_ADMIN rejecting a proposal gets 403 PLATFORM_ADMIN_NO_CONTEXT", async () => {
+    givenProposal();
+    asPlatformAdmin();
+
+    const { status, body } = await readJson(
+      await rejectPOST(jsonRequest("POST", "/api/agent/proposals/p1/reject", { reason: "no" }), routeParams({ id: "p1" })),
+    );
+
+    expect(status).toBe(403);
+    expect(body.error).toBe("PLATFORM_ADMIN_NO_CONTEXT");
+    expect(prismaMock.agentProposal.update).not.toHaveBeenCalled();
+  });
+});

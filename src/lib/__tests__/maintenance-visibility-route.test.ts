@@ -15,10 +15,11 @@ const ADMIN_ID = "vis-admin";
 const MAINTAINER_ID = "vis-maintainer";
 const MEMBER_ID = "vis-member";
 const OTHER_MEMBER_ID = "vis-member-2";
+const OTHER_MAINTAINER_ID = "vis-maintainer-2";
 
 type Task = { id: string; tenantId: string; title: string; visibility: string; submittedById: string; assignedToId: string | null };
-const task = (id: string, visibility: string, submittedById: string, tenantId = TENANT_ID): Task => ({
-  id, tenantId, title: id, visibility, submittedById, assignedToId: null,
+const task = (id: string, visibility: string, submittedById: string, tenantId = TENANT_ID, assignedToId: string | null = null): Task => ({
+  id, tenantId, title: id, visibility, submittedById, assignedToId,
 });
 
 // Mix of tasks with different visibilities and submitters.
@@ -28,7 +29,13 @@ const PUBLIC_TASK = task("public-task", "PUBLIC", ADMIN_ID);
 const MAINTAINER_SELF_TASK = task("maintainer-task", "MAINTENANCE_ONLY", MAINTAINER_ID);
 const OTHER_MEMBER_MEMBERS_TASK = task("other-member-task", "MEMBERS", OTHER_MEMBER_ID);
 const OTHER_TENANT_TASK = task("other-tenant-task", "PUBLIC", "someone-else", OTHER_TENANT_ID);
-const ALL_TASKS = [ADMIN_TASK, MEMBER_SUBMITTED_TASK, PUBLIC_TASK, MAINTAINER_SELF_TASK, OTHER_MEMBER_MEMBERS_TASK, OTHER_TENANT_TASK];
+// Assigned tasks: one to the maintainer under test, one to a colleague.
+const ASSIGNED_TO_MAINTAINER_TASK = task("assigned-to-maintainer", "MEMBERS", MEMBER_ID, TENANT_ID, MAINTAINER_ID);
+const ASSIGNED_TO_COLLEAGUE_TASK = task("assigned-to-colleague", "MAINTENANCE_ONLY", ADMIN_ID, TENANT_ID, OTHER_MAINTAINER_ID);
+const ALL_TASKS = [
+  ADMIN_TASK, MEMBER_SUBMITTED_TASK, PUBLIC_TASK, MAINTAINER_SELF_TASK, OTHER_MEMBER_MEMBERS_TASK, OTHER_TENANT_TASK,
+  ASSIGNED_TO_MAINTAINER_TASK, ASSIGNED_TO_COLLEAGUE_TASK,
+];
 
 const signInAsRole = (role: Role, id: string, tenantId = TENANT_ID) => signInAs({ id, role, tenantId });
 
@@ -70,25 +77,22 @@ describe("GET /api/maintenance — visibility filtering", () => {
     expect(ids).not.toContain(OTHER_TENANT_TASK.id);
   });
 
-  test("MAINTENANCE sees own + MAINTENANCE_ONLY but not arbitrary MEMBERS", async () => {
+  test("[B-63] D-11 / FR-MNT-003 – MAINTENANCE sees only the tasks assigned to them", async () => {
     signInAsRole("MAINTENANCE", MAINTAINER_ID);
     const ids = await listVisibleIds();
 
-    expect(listWhere()).toEqual({
-      tenantId: TENANT_ID,
-      OR: [
-        { assignedToId: MAINTAINER_ID },
-        { submittedById: MAINTAINER_ID },
-        { visibility: "MAINTENANCE_ONLY" },
-      ],
-    });
-    expect(ids).toEqual(expect.arrayContaining([ADMIN_TASK.id, MAINTAINER_SELF_TASK.id]));
+    expect(listWhere()).toMatchObject({ tenantId: TENANT_ID });
+    expect(ids).toContain(ASSIGNED_TO_MAINTAINER_TASK.id);
+    // Unassigned triage-queue tasks and colleagues' tasks are not theirs.
+    expect(ids).not.toContain(ADMIN_TASK.id);
+    expect(ids).not.toContain(ASSIGNED_TO_COLLEAGUE_TASK.id);
     expect(ids).not.toContain(MEMBER_SUBMITTED_TASK.id);
     expect(ids).not.toContain(OTHER_MEMBER_MEMBERS_TASK.id);
     expect(ids).not.toContain(PUBLIC_TASK.id);
+    expect(ids).not.toContain(OTHER_TENANT_TASK.id);
   });
 
-  test("USER sees own + MEMBERS + PUBLIC but never MAINTENANCE_ONLY", async () => {
+  test("[B-63] D-11 – USER keeps the visibility model: own + MEMBERS + PUBLIC but never MAINTENANCE_ONLY", async () => {
     signInAsRole("USER", MEMBER_ID);
     const ids = await listVisibleIds();
 
@@ -104,6 +108,7 @@ describe("GET /api/maintenance — visibility filtering", () => {
     ]));
     expect(ids).not.toContain(ADMIN_TASK.id);
     expect(ids).not.toContain(MAINTAINER_SELF_TASK.id);
+    expect(ids).not.toContain(ASSIGNED_TO_COLLEAGUE_TASK.id);
     expect(ids).not.toContain(OTHER_TENANT_TASK.id);
   });
 });

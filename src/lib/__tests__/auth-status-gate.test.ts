@@ -46,10 +46,10 @@ describe("credentials authorize() — tenant status gate", () => {
     const result = await authorize({ email: user.email, password: PASSWORD });
     expect(result).not.toBeNull();
     expect((result as any).id).toBe(user.id);
-    expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
-      where: { email: EMAIL },
-      include: { tenant: true },
-    });
+    // Looked up by the (lower-case) email; the exact include is an implementation detail.
+    expect(prismaMock.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { email: EMAIL } }),
+    );
   });
 
   test("ONBOARDING tenant: sign-in allowed (admins must drive the wizard)", async () => {
@@ -74,6 +74,81 @@ describe("credentials authorize() — tenant status gate", () => {
   test("Wrong password: sign-in blocked regardless of tenant status", async () => {
     const user = givenUserWithTenant("ACTIVE");
     const result = await authorize({ email: user.email, password: "wrong" });
+    expect(result).toBeNull();
+  });
+});
+
+describe("[B-13] credentials authorize() — email casing", () => {
+  test("[B-13] FR-AUTH-001 – login with different email casing succeeds", async () => {
+    const user = {
+      id: "user-1",
+      email: EMAIL,
+      name: null,
+      passwordHash,
+      role: "USER",
+      tenantId: "tenant-1",
+      suspended: false,
+      tenant: { id: "tenant-1", status: "ACTIVE", active: true },
+      memberships: [],
+    };
+    // Stored lower-case: only a normalised (or case-insensitive) lookup finds it.
+    const lookup = async ({ where }: any) => {
+      const e = where?.email;
+      if (e === EMAIL) return user;
+      if (e && typeof e === "object" && e.mode === "insensitive" && String(e.equals).toLowerCase() === EMAIL) return user;
+      return null;
+    };
+    prismaMock.user.findUnique.mockImplementation(lookup as never);
+    prismaMock.user.findFirst.mockImplementation(lookup as never);
+    prismaMock.membership.findMany.mockResolvedValue([] as never);
+
+    const result = await authorize({ email: "Admin@Example.TEST", password: PASSWORD });
+
+    expect(result).not.toBeNull();
+    expect((result as any).id).toBe("user-1");
+  });
+});
+
+describe("[B-17] credentials authorize() — tenant status via memberships", () => {
+  test("[B-17] D-08 – sign-in refused when the user's only membership is in a SUSPENDED tenant", async () => {
+    const suspendedTenant = {
+      id: "tenant-s",
+      name: "Suspended Club",
+      slug: "suspended",
+      brandColor: "#000",
+      status: "SUSPENDED",
+      active: false,
+      locality: null,
+      locale: "en",
+    };
+    const membership = {
+      id: "m1",
+      userId: "user-1",
+      tenantId: suspendedTenant.id,
+      role: "USER",
+      kind: "MEMBER",
+      status: "ACTIVE",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      tenant: suspendedTenant,
+    };
+    // No legacy User.tenantId: the only tenant link is the membership.
+    const user = {
+      id: "user-1",
+      email: EMAIL,
+      name: null,
+      passwordHash,
+      role: "USER",
+      tenantId: null,
+      suspended: false,
+      tenant: null,
+      memberships: [membership],
+    };
+    prismaMock.user.findUnique.mockResolvedValue(user as never);
+    prismaMock.user.findFirst.mockResolvedValue(user as never);
+    prismaMock.membership.findMany.mockResolvedValue([membership] as never);
+
+    const result = await authorize({ email: EMAIL, password: PASSWORD });
+
     expect(result).toBeNull();
   });
 });

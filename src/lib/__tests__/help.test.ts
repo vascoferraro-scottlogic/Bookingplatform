@@ -1,4 +1,5 @@
 jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
 import { promises as fs } from "fs";
 import path from "path";
@@ -36,6 +37,21 @@ beforeAll(async () => {
   await writeArticle(
     "cy/bookings/approve.md",
     `---\ntitle: Cymeradwyo archebion\ncategory: bookings\naudience: tenant_admin\norder: 10\nexcerpt: Sut i gymeradwyo.\n---\nCorff CY.`,
+  );
+
+  // [B-21] fixtures: an article whose search term appears only in the body,
+  // and two files outside the en/cy locale trees that path traversal could reach.
+  await writeArticle(
+    "en/grounds/mowing.md",
+    `---\ntitle: Green care\ncategory: grounds\naudience: tenant_admin\ntags: [greens]\norder: 30\nexcerpt: Looking after the green.\n---\nRun the scarifier twice a season.`,
+  );
+  await writeArticle(
+    "outside.md",
+    `---\ntitle: Leaked outside file\ncategory: bookings\naudience: tenant_admin\n---\nSecret.`,
+  );
+  await writeArticle(
+    "private/bookings/approve.md",
+    `---\ntitle: Leaked private locale\ncategory: bookings\naudience: tenant_admin\n---\nSecret.`,
   );
 
   help = require("@/lib/help");
@@ -96,6 +112,12 @@ describe("getArticle — locale fallback", () => {
 });
 
 describe("overrides", () => {
+  // Overrides apply only while the helpOverrides flag is on (FR-HLP-002).
+  beforeEach(() => {
+    prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: true } as never);
+    prismaMock.featureFlag.findMany.mockResolvedValue([{ key: "helpOverrides", enabled: true }] as never);
+  });
+
   test("override title replaces shipped title", async () => {
     givenOverrides([{ slug: "approve", locale: "en", title: "Custom approval guide", body: "Custom body.", enabled: true }]);
 
@@ -146,5 +168,62 @@ describe("listArticles — query and category filters", () => {
   test("query matches across title, excerpt and tags", async () => {
     const list = await help.listArticles({ locale: "en", realRole: "TENANT_ADMIN", query: "approval" });
     expect(list.some((a) => a.slug === "approve")).toBe(true);
+  });
+});
+
+describe("[B-21] help content — path safety, full-text search, flag-gated overrides", () => {
+  test("[B-21] FR-HLP-001 – a slug containing '../' is not found", async () => {
+    const a = await help.getArticle({ slug: "../../outside", locale: "en", realRole: "TENANT_ADMIN" });
+    expect(a).toBeNull();
+  });
+
+  test("[B-21] FR-HLP-001 – a locale containing '../' is not found", async () => {
+    const a = await help.getArticle({
+      slug: "approve",
+      locale: `../${path.basename(workdir)}/private`,
+      realRole: "TENANT_ADMIN",
+    });
+    // Must not serve the file from outside the locale tree.
+    expect(a?.title).not.toBe("Leaked private locale");
+    expect(a).toBeNull();
+  });
+
+  test("[B-21] FR-HLP-001 – search matches body text, not only title / excerpt / tags", async () => {
+    const list = await help.listArticles({ locale: "en", realRole: "TENANT_ADMIN", query: "scarifier" });
+    expect(list.map((a) => a.slug)).toContain("mowing");
+  });
+
+  describe("overrides with the helpOverrides flag OFF", () => {
+    const { signInAs } = require("@/test-utils/session") as typeof import("@/test-utils/session");
+    const { request, readJson, routeParams } = require("@/test-utils/http") as typeof import("@/test-utils/http");
+
+    beforeEach(() => {
+      // Every flag reads Postgres in tests (Unleash unconfigured); helpOverrides is off.
+      prismaMock.featureFlag.findUnique.mockImplementation((async ({ where }: any) =>
+        ({ tenantId: where.tenantId_key.tenantId, key: where.tenantId_key.key, enabled: where.tenantId_key.key !== "helpOverrides" })) as never);
+      prismaMock.featureFlag.findMany.mockResolvedValue([{ key: "helpOverrides", enabled: false }] as never);
+      signInAs({ id: "admin-1", role: "TENANT_ADMIN", tenantId: TENANT_ID });
+    });
+
+    test("[B-21] FR-HLP-002 – GET /api/help/[slug] ignores a tenant's override when the flag is off", async () => {
+      givenOverrides([{ slug: "approve", locale: "en", title: "Custom approval guide", body: "Custom body.", enabled: true }]);
+      const { GET } = require("@/app/api/help/[slug]/route");
+
+      const { status, body } = await readJson(await GET(request("/api/help/approve?locale=en"), routeParams({ slug: "approve" })));
+
+      expect(status).toBe(200);
+      expect(body.title).toBe("Approve bookings");
+      expect(body.overridden).toBe(false);
+    });
+
+    test("[B-21] FR-HLP-002 – GET /api/help does not hide articles via a disabled override when the flag is off", async () => {
+      givenOverrides([{ slug: "approve", locale: "en", enabled: false }]);
+      const { GET } = require("@/app/api/help/route");
+
+      const { status, body } = await readJson(await GET(request("/api/help?locale=en")));
+
+      expect(status).toBe(200);
+      expect(body.map((a: any) => a.slug)).toContain("approve");
+    });
   });
 });
