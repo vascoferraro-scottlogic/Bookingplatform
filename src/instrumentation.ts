@@ -7,7 +7,10 @@ import { captureError, deploymentContext, logEvent } from "@/lib/observability";
  */
 export function register() {
   const { color, release } = deploymentContext();
-  logEvent("info", "app boot", { node: process.version, color, release });
+  // process.version is not available in the Edge runtime (build warning), so
+  // only read it under Node.
+  const node = process.env.NEXT_RUNTIME === "nodejs" ? process.version : undefined;
+  logEvent("info", "app boot", { node, color, release });
 }
 
 /**
