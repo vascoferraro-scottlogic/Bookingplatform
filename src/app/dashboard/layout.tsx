@@ -91,6 +91,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [status, inPlatformMode, isTenantAdminEffective, pathname, router]);
 
+  // Live notifications over the existing SSE stream (FR-NTF-001)
+  useEffect(() => {
+    // Platform admins have no tenant of their own, so the stream would end at once and reconnect in a loop
+    if (status !== "authenticated" || isPlatformAdmin) return;
+    const es = new EventSource("/api/messaging/stream");
+    es.addEventListener("notification", () => setUnread((n) => n + 1));
+    return () => es.close();
+  }, [status, isPlatformAdmin]);
+
   return (
     <div className="min-h-screen flex flex-col">
       {!inPlatformMode && (

@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { getSessionOrFail, jsonError } from "@/lib/api-utils";
-import { isFeatureEnabled } from "@/lib/features";
+import { getSessionOrFail } from "@/lib/api-utils";
 import { addConnection, removeConnection } from "@/lib/sse-connections";
 
 export const dynamic = "force-dynamic";
 
-/** SSE stream for real-time messaging events. */
+/** SSE stream for real-time events (messages, notifications, stream-live). */
 export async function GET() {
   const { session, error } = await getSessionOrFail();
   if (error) return error;
@@ -16,10 +15,6 @@ export async function GET() {
     return new NextResponse("event: connected\ndata: {}\n\n", {
       headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform" },
     });
-  }
-
-  if (!(await isFeatureEnabled(tenantId, "messaging"))) {
-    return jsonError("Messaging is not enabled for this club", 403);
   }
 
   const userId = session.user.id;

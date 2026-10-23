@@ -1,11 +1,14 @@
 import { prisma } from "@/lib/prisma";
+import { sendToUser } from "@/lib/sse-connections";
 
 export type NotificationType =
   | "WAITLIST_AVAILABLE"
   | "TASK_ASSIGNED"
   | "TASK_PRIORITY_CHANGED"
   | "BOOKING_APPROVED"
-  | "BOOKING_CANCELLED";
+  | "BOOKING_CANCELLED"
+  | "BOOKING_OVERRIDE"
+  | "STREAM_LIVE";
 
 export async function createNotification(params: {
   tenantId: string;
@@ -14,7 +17,10 @@ export async function createNotification(params: {
   title: string;
   body: string;
 }) {
-  return prisma.notification.create({ data: params });
+  const notification = await prisma.notification.create({ data: params });
+  // Real-time push to the user's open connections (FR-NTF-001)
+  sendToUser(params.userId, "notification", notification);
+  return notification;
 }
 
 export async function getUserNotifications(userId: string, unreadOnly = false) {

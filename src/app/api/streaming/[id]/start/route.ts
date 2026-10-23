@@ -56,7 +56,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
     createNotification({
       tenantId,
       userId,
-      type: "STREAM_LIVE" as never,
+      type: "STREAM_LIVE",
       title: "Stream Live",
       body: `${stream.title} is now live on ${updated.rink.name}`,
     }).catch(() => {});
