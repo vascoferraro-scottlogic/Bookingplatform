@@ -12,7 +12,8 @@ import { ALL_PERMISSIONS } from "@/lib/permission-defs";
  * Assert that the current session has `permission` within `tenantId` scope.
  * - `tenantId` may be supplied (from `resolveTenantId`) or null to use the
  *   session's effective tenant context (impersonation-aware).
- * - `TENANT_ADMIN` (or impersonating-as-TENANT_ADMIN) bypasses checks.
+ * - `TENANT_ADMIN` (or impersonating-as-TENANT_ADMIN) bypasses checks in their
+ *   own effective tenant only.
  * - Non-impersonating `PLATFORM_ADMIN` is rejected with a special 403 body.
  */
 export async function assertPermissionOrFail(
@@ -28,8 +29,10 @@ export async function assertPermissionOrFail(
   const permission = (b === undefined ? (a as PrismaPermission) : (b as PrismaPermission));
   const tenantIdOverride = b === undefined ? null : (a as string | null);
 
-  // Tenant admin (real or impersonated) = implicit all-permissions
-  if (eff.role === "TENANT_ADMIN") return null;
+  // Tenant admin (real or impersonated) = implicit all-permissions, but only in
+  // their own (effective) tenant. At another club (e.g. a federation partner)
+  // they need a real group grant there.
+  if (eff.role === "TENANT_ADMIN" && (!tenantIdOverride || tenantIdOverride === eff.tenantId)) return null;
 
   // PLATFORM_ADMIN not impersonating has no tenant context
   if (session.user.role === "PLATFORM_ADMIN" && !eff.isImpersonating) {

@@ -48,6 +48,16 @@ beforeEach(() => {
 });
 
 describe("assertPermissionOrFail", () => {
+  test("[B-46] a TENANT_ADMIN bypasses permission checks only in their own tenant, not at another club", async () => {
+    const admin = makeSession({ id: "admin-1", role: "TENANT_ADMIN", tenantId: TENANT_ID });
+
+    expect(await assertPermissionOrFail(admin, TENANT_ID, "bookings_admin_override" as never)).toBeNull();
+    expect(await assertPermissionOrFail(admin, "bookings_admin_override" as never)).toBeNull();
+
+    const res = await assertPermissionOrFail(admin, "partner-club", "bookings_admin_override" as never);
+    expect(res?.status).toBe(403);
+  });
+
   test("TENANT_ADMIN bypasses — always passes", async () => {
     const session = makeSession({ role: "TENANT_ADMIN", tenantId: TENANT_ID });
     const result = await assertPermissionOrFail(session, "bookings_view");
