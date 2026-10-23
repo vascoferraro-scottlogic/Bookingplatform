@@ -1,5 +1,10 @@
 # Assignment: Project Phoenix — Handover Notes
 
+> **Superseded for setup:** the repository [README](../README.md) is the
+> authoritative, up-to-date setup guide (native PostgreSQL, `npm run setup:env`,
+> running the tests, Postman). Where this document disagrees with the README,
+> follow the README. This file is kept for the assignment brief.
+
 **Client:** A well-meaning but naive startup that went "all in" on AI-driven development.
 
 **Background:** The client discarded their team's engineering best practices, assuming AI tooling would handle everything from design to testing. The result is a system that *appears* to work, but its quality, reliability, and test coverage are complete unknowns. The client has now realised the "magic" was an illusion and has called in your team of experts to assess the damage and create a recovery plan.
@@ -21,7 +26,7 @@ This document contains the original, sparse handover notes from the client. Use 
 
 The original developers confirmed you will need:
 
-- **Node.js 18+** — verify: `node --version`
+- **Node.js 22.12 or newer** — verify: `node --version`
 - **Git** — verify: `git --version`
 - **VS Code** with **GitHub Copilot** extension (licensed)
 
@@ -38,14 +43,14 @@ Our app needs a Postgres database. Your goal is to have a running server that yo
 Open a terminal and run: `psql --version`
 
 -   **If it returns `psql (PostgreSQL) 16.x`**: Great, you're on the right version. Skip to **Step 1.3**.
--   **If it returns an older version (12.x, 14.x, etc.)**: That's probably fine. The app isn't using any v16-specific features. Skip to **Step 1.3**.
+-   **If it returns an older version**: 13 or newer will work (the schema uses `gen_random_uuid()`, which needs PostgreSQL 13+). Anything older, install 16. Skip to **Step 1.3** if you're on 13+.
 -   **If the command fails**: You need to install Postgres. Continue to **Step 1.2**.
 
 #### Step 1.2: Install PostgreSQL 16 (if needed)
 
 1.  Download the Windows installer from https://www.postgresql.org/download/windows/ (EDB installer).
 2.  Run the installer, accepting defaults. **Remember the superuser password** you set.
-3.  The installer will also install **pgAdmin** (a GUI) and **psql** (a command-line tool).
+3.  The installer will also install **pgAdmin** (a GUI) and **psql** (a command-line tool). It does **not** add `psql` to your `PATH`: add `C:Program FilesPostgreSQLin` to it (or use the SQL Shell from the Start Menu).
 
 #### Step 1.3: Ensure the service is running
 
@@ -94,15 +99,9 @@ cd BookingPlatform
 
 ## On the Day
 
-### Step 1: Install dependencies
+### Step 1: Create your `.env` file
 
-```bash
-npm install
-```
-
-### Step 2: Create your `.env` file
-
-Copy the example file:
+Run `npm run setup:env` to create `.env` with the local defaults and a generated secret (see the README), or copy the example file by hand:
 
 ```bash
 copy .env.example .env
@@ -115,9 +114,9 @@ Open `.env` in VS Code and set the following values.
 | `DATABASE_URL` | `postgresql://booking:booking@localhost:5432/bookingplatform` |
 | `NEXTAUTH_URL` | `http://localhost:3000` |
 | `NEXTAUTH_SECRET` | *(generate — see below)* |
-| `AGENT_LLM_PROVIDER` | `gemini` |
+| `AGENT_LLM_PROVIDER` | `gemini` (or `stub` if you have no key) |
 | `AGENT_GEMINI_API_KEY` | *(your key from pre-work step 2)* |
-| `AGENT_GEMINI_MODEL` | `gemini-1.5-flash` |
+| `AGENT_GEMINI_MODEL` | `gemini-2.5-flash` |
 | `AGENT_SECRET` | *(provided by facilitator)* |
 
 **Note on `AGENT_OWM_API_KEY`**: Leave this blank. The client noted the weather integration for the agent is "unreliable" and they disabled it. This is your first clue.
@@ -129,6 +128,14 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
 Paste the output as the value.
+
+### Step 2: Install dependencies
+
+```bash
+npm install
+```
+
+(Create `.env` first: the install runs `prisma generate`, which fails without it.)
 
 ### Step 3: Run database migrations
 
@@ -200,144 +207,69 @@ npm run dev
 
 ---
 
-## Blue/Green Infrastructure Lab (optional, container-based)
+## Container stack (optional)
 
-> **Separate from the main exercise above.** The Project Phoenix assessment
-> runs the app the "bare" way (`npm run dev` + local Postgres). This lab is a
-> standalone, hands-on rig for practising **deployment and feature-flag
-> management on container infrastructure** — the kind of operational testing
-> you'd do against a real blue/green production setup. Each tester runs their
-> own copy locally; break it, reset it, that's the point.
+> **Separate from the main exercise above.** The assessment runs the app the
+> "bare" way (`npm run dev` + local Postgres). The repository's
+> `docker-compose.yml` is an optional way to run a production-style build in
+> containers.
 
-### What you'll practise
+The compose file defines these services:
 
-- Running a multi-service stack (two app "colours", Postgres, a feature-flag
-  control plane, an ML sidecar) behind a reverse proxy.
-- Promoting a **zero-downtime blue/green deploy** and watching traffic move.
-- Flipping a **feature flag** and observing it take effect at runtime.
-- Tearing down and bringing back up **without losing data**.
-
-### Prerequisite: a free container runtime
-
-You need something that provides the `docker` and `docker compose` commands.
-**Docker Desktop is _not_ required** (and its licence isn't free for larger
-companies). Use one of these instead:
-
-| Runtime | OS | Notes |
-|---|---|---|
-| **Rancher Desktop** (recommended) | Win / macOS / Linux | Free (Apache 2.0). Pick the **`dockerd (moby)`** backend in Preferences → Container Engine. Gives you real `docker` + `docker compose`, plus a GUI to watch containers/logs. |
-| Podman Desktop | Win / macOS / Linux | Free (CNCF). Works, but set `COMPOSE_CMD="podman compose"` (see below). |
-| Colima | macOS / Linux | Free, CLI-only. No Windows. |
-
-> Verify your install before the day: `docker compose version` should print a
-> version. With Rancher Desktop's moby backend, every command below works
-> exactly as written.
-
-### Faster start (optional): pull prebuilt images
-
-Building the images locally works, but the first build takes several minutes.
-If the facilitator has published the images, you can **pull prebuilt,
-multi-arch images** (Apple Silicon + Intel/AMD) from GHCR and skip the build
-entirely:
-
-```bash
-npm run stack:pull      # download the published images
-npm run stack:up:ghcr   # start the stack from them (no local build)
-```
-
-Everything else in this lab is identical — same URLs, same `npm run swap`, same
-teardown. To switch back to building from source, just use `npm run stack:up`.
-
-> Pulling from a different account? If you forked and published the images
-> yourself, point the overlay at your namespace with a `.env` entry:
-> `GHCR_OWNER=<your-lowercased-github-owner>`.
-
-### Run the stack
-
-From the repo root:
-
-```bash
-npm run stack:up
-```
-
-The first run **builds the images and can take several minutes**. Subsequent
-runs are fast. When it settles you'll have:
-
-| URL | What |
+| Service | What |
 |---|---|
-| http://localhost:8090 | The app (served through Caddy → the live colour) |
-| http://localhost:8090/api/health | Liveness JSON: `{ color, release, … }` |
-| http://localhost:4242 | Unleash — the feature-flag control plane |
+| `postgres` | PostgreSQL 16 with a persistent `pgdata` volume |
+| `app-migrate` | One-shot job that applies migrations and seeds (`docker/init.sh`) |
+| `app` | The production build of the app, published on `127.0.0.1:3000` |
+| `cloudflared` | Public tunnel. **Optional**: only starts with `COMPOSE_PROFILES=tunnel` and a `CLOUDFLARED_TUNNEL_TOKEN` |
 
-No `.env` is needed for this lab — the compose file supplies safe local
-defaults. (The AI agent features stay inert without API keys; they're not part
-of this lab.)
+There is no reverse proxy, blue/green pair, Unleash or ML service in the
+compose file, so there is no `npm run swap` exercise to run against it.
 
-Log in with the seeded accounts from the **Demo Accounts** table above
-(e.g. `admin@lakeview.club` / `club123`). The Unleash admin console at
-:4242 uses `admin` / `unleash4all`.
+### Prerequisite: a container runtime
 
-### Exercise 1 — promote a blue/green deploy
+You need something that provides `docker` and `docker compose` (for example
+Rancher Desktop with the `dockerd (moby)` backend, which is free). Verify with
+`docker compose version`.
 
-1. Check which colour is live:
-   ```bash
-   curl http://localhost:8090/api/health
-   ```
-   Note the `"color"` (e.g. `blue`) and `"release"` fields.
-2. Promote the other colour (zero-downtime graceful reload):
-   ```bash
-   npm run swap
-   ```
-3. Re-check `/api/health` — `"color"` has flipped. Refresh the app in the
-   browser; you stayed logged in and saw no downtime. Run `npm run swap`
-   again to flip back. (Force a specific colour with
-   `node bin/swap.mjs blue` / `green`.)
+### Run it
 
-### Exercise 2 — flip a feature flag
-
-1. Open Unleash at http://localhost:4242 and log in (`admin` / `unleash4all`).
-2. Find a feature flag, toggle it for the development environment, and save.
-3. The app's flag SDK polls every ~15 seconds — wait, then refresh the app and
-   observe the gated behaviour change. Toggle it back to compare.
-
-### Teardown (data is safe)
+The compose file reads its settings from `.env`. In addition to the values in
+the main setup, set `POSTGRES_PASSWORD` (any value), and make `DATABASE_URL`
+point at the container, for example
+`postgresql://booking:<POSTGRES_PASSWORD>@postgres:5432/bookingplatform`. Then:
 
 ```bash
-npm run stack:down     # stops containers; the Postgres volume persists
-npm run stack:up       # back up again — your data and logins are still there
-npm run stack:logs     # tail all service logs (Ctrl-C to stop)
+npm run stack:up      # build and start (first build takes several minutes)
+npm run stack:logs    # tail logs (Ctrl-C to stop)
+npm run stack:down    # stop; the pgdata volume keeps your data
 ```
 
-Only the `pgdata` volume holds state. Removing containers never loses data; you
-would have to explicitly delete that volume to start clean.
+Open http://localhost:3000. Use the seeded accounts from the table above.
 
-### Podman users
+### Faster start (optional): prebuilt images
 
-The tooling defaults to `docker compose`. If you're on Podman, prefix the
-commands with the engine override:
+If prebuilt images have been published to GHCR you can skip the local build:
 
 ```bash
-COMPOSE_CMD="podman compose" npm run stack:up
-COMPOSE_CMD="podman compose" npm run swap
+npm run stack:pull
+npm run stack:up:ghcr
 ```
 
-### Troubleshooting the lab
+If you forked and published the images yourself, set
+`GHCR_OWNER=<your-lowercased-github-owner>` in `.env`.
 
-- **`docker: command not found`** — your container runtime isn't installed or
-  isn't on `PATH`. Re-check the prerequisite step; with Rancher Desktop ensure
-  it's running and the moby backend is selected.
-- **Port 8090 / 4242 / 5432 already in use** — another process (often a local
-  Postgres or a previous run) holds the port. Stop it, or run `npm run
-  stack:down` to clear a prior stack.
-- **First `stack:up` looks stuck** — it's building images. Watch progress in
-  another terminal with `npm run stack:logs`, or in your runtime's GUI.
+### Troubleshooting
+
+- **`docker: command not found`**: the runtime isn't installed or isn't on `PATH`.
+- **Port 3000 or 5432 already in use**: another process (often a local Postgres
+  or a previous run) holds the port. Stop it, or run `npm run stack:down`.
+- **First `stack:up` looks stuck**: it is building images; watch `npm run stack:logs`.
 
 ### Publishing the prebuilt images (facilitator only)
 
-Testers pull whatever you've published to GHCR. To (re)publish: run the
-**Build & publish stack images** GitHub Action (Actions tab → Run workflow),
-or push a `v*` tag. It builds all three images (`bookingplatform-app`,
-`-migrate`, `-ml`) for amd64 + arm64 and pushes them to GHCR. After the first
-run, make those three packages **public** (GitHub profile → Packages → each
-package → Package settings → Change visibility → Public) so testers can pull
-without authenticating.
+Run the **Build & publish stack images** GitHub Action (Actions tab, Run
+workflow), or push a `v*` tag. It builds two images (`bookingplatform-app` and
+`bookingplatform-migrate`) for amd64 and arm64 and pushes them to GHCR. After the
+first run, make both packages **public** so testers can pull without
+authenticating.
