@@ -60,6 +60,8 @@ function seedToken(row: Partial<TokenRow> & { token: string }) {
 }
 
 beforeEach(() => {
+  outbound.sendOutbound.mockClear();
+  outbound.sendEmail.mockClear();
   tokens = [];
   nextId = 1;
   const t = prismaMock.passwordResetToken;
