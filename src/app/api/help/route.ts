@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionOrFail, jsonError } from "@/lib/api-utils";
 import { getEffectiveRole } from "@/lib/roles";
 import { listArticles } from "@/lib/help";
+import { isFeatureEnabled } from "@/lib/features";
 
 /**
  * GET /api/help — list help articles, filtered by audience and (optionally)
@@ -26,9 +27,13 @@ export async function GET(req: NextRequest) {
   const category = sp.get("category") || undefined;
   const query = sp.get("q") || undefined;
 
+  // Overrides only apply while the helpOverrides flag is on for the tenant.
+  const tenantId = eff.tenantId ?? session.user.tenantId ?? undefined;
+  const overridesOn = tenantId ? await isFeatureEnabled(tenantId, "helpOverrides") : false;
+
   const articles = await listArticles({
     locale,
-    tenantId: eff.tenantId ?? session.user.tenantId ?? undefined,
+    tenantId: overridesOn ? tenantId : undefined,
     realRole,
     category,
     query,

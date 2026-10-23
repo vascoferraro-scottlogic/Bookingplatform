@@ -73,13 +73,20 @@ export interface ListOptions {
   realRole?: "TENANT_ADMIN" | "PLATFORM_ADMIN" | string;
   /** Optional category filter. */
   category?: string;
-  /** Optional case-insensitive query against title / excerpt / tags. */
+  /** Optional case-insensitive query against title / excerpt / tags / body. */
   query?: string;
 }
 
 const CONTENT_ROOT =
   process.env.HELP_CONTENT_ROOT ?? path.join(process.cwd(), "content", "help");
 const FALLBACK_LOCALE = "en";
+
+// ─── Path safety ─────────────────────────────────────────────
+
+// Locale and slug become path segments, so only plain identifiers are allowed
+// (no separators, dots or traversal).
+const LOCALE_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/;
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;
 
 // ─── Filesystem helpers ──────────────────────────────────────
 
@@ -150,6 +157,7 @@ async function loadShippedSlugs(): Promise<string[]> {
 }
 
 async function loadShippedArticle(slug: string, locale: string): Promise<RawArticle | null> {
+  if (!SLUG_RE.test(slug) || !LOCALE_RE.test(locale)) return null;
   // Find the file by scanning category folders. A small directory tree means
   // this is fast enough to do on demand without extra indexing.
   const tryLocale = async (loc: string): Promise<{ filePath: string } | null> => {
@@ -255,6 +263,7 @@ function matchesQuery(a: RawArticle, query: string): boolean {
   return (
     a.fm.title.toLowerCase().includes(q) ||
     a.fm.excerpt.toLowerCase().includes(q) ||
+    a.body.toLowerCase().includes(q) ||
     a.fm.tags.some((t) => t.toLowerCase().includes(q))
   );
 }
