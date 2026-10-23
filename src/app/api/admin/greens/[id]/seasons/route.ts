@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
+import { currentClubYear } from "@/lib/season";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -51,21 +52,39 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return jsonError("Invalid JSON body", 400);
   }
 
-  const { year, startDate, endDate, note } = body as {
+  const { year: yearInput, startDate, endDate, note, overwrite } = body as {
     year?: number;
+    overwrite?: boolean;
     startDate?: string;
     endDate?: string;
     note?: string;
   };
 
-  if (!year || !startDate || !endDate) {
-    return jsonError("year, startDate, and endDate are required", 400);
+  if (!startDate || !endDate) {
+    return jsonError("startDate and endDate are required", 400);
   }
-  if (typeof year !== "number" || year < 2000 || year > 2100) {
+
+  // Year defaults to the current year in the club's timezone
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+  const year = yearInput ?? currentClubYear(tenant?.timezone);
+  if (typeof year !== "number" || !Number.isInteger(year) || year < 2000 || year > 2100) {
     return jsonError("year must be a number between 2000 and 2100", 400);
   }
-  if (new Date(endDate) <= new Date(startDate)) {
-    return jsonError("endDate must be after startDate", 400);
+  const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+  if (!isoDate.test(startDate) || !isoDate.test(endDate) || isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) {
+    return jsonError("startDate and endDate must be valid YYYY-MM-DD dates", 400);
+  }
+  if (Number(startDate.slice(0, 4)) !== year || Number(endDate.slice(0, 4)) !== year) {
+    return jsonError(`startDate and endDate must fall within ${year}`, 400);
+  }
+  // A one-day season (start = end) is allowed
+  if (endDate < startDate) {
+    return jsonError("endDate must not be before startDate", 400);
+  }
+
+  const existing = await prisma.greenSeason.findUnique({ where: { greenId_year: { greenId, year } } });
+  if (existing && overwrite !== true) {
+    return jsonError(`A ${year} season override already exists. Send overwrite: true to replace it.`, 409);
   }
 
   const season = await prisma.greenSeason.upsert({
