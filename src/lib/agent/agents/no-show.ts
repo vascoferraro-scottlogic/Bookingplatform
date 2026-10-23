@@ -24,7 +24,7 @@ interface NoShowConfig {
   riskThreshold: number;
   /** Only predict upcoming CONFIRMED/RESERVED bookings; skip past bookings. */
   predictionWindowDays: number;
-  /** Max bookings per run. */
+  /** Page size when scoring: bookings are fetched this many at a time until all are scored. */
   maxBookingsPerRun: number;
 }
 
@@ -65,146 +65,159 @@ export class NoShowRiskAgent extends BaseAgent {
       return { itemsProcessed: 0, tasksAffected: 0, decisionsRecorded: 0, extras: { skipped: "disabled" } };
     }
 
+    // The threshold is a probability: keep it within 0–1 (a value like 40 would never trigger).
+    config.riskThreshold = Number.isFinite(config.riskThreshold)
+      ? Math.min(1, Math.max(0, config.riskThreshold))
+      : DEFAULTS.riskThreshold;
+    if (!(config.maxBookingsPerRun >= 1)) config.maxBookingsPerRun = DEFAULTS.maxBookingsPerRun;
+
     // Upcoming bookings (next `predictionWindowDays` days)
     const now = new Date();
     const windowEnd = new Date(now.getTime() + config.predictionWindowDays * 24 * 60 * 60 * 1000);
 
-    const bookings = await prisma.booking.findMany({
-      where: {
-        tenantId,
-        status: { in: ["CONFIRMED", "RESERVED"] as BookingStatus[] },
-        date: {
-          gte: now.toISOString().slice(0, 10),
-          lte: windowEnd.toISOString().slice(0, 10),
-        },
-      },
-      include: {
-        user: { select: { createdAt: true } },
-        slots: { select: { timeSlot: true, rink: { select: { green: { select: { allWeather: true } } } } } },
-      },
-      orderBy: { date: "asc" },
-      take: config.maxBookingsPerRun,
-    });
-
-    if (bookings.length === 0) {
-      return { itemsProcessed: 0, tasksAffected: 0, decisionsRecorded: 0 };
-    }
-
-    // Pre-compute prior no-show counts for all users in this batch (avoid N+1)
-    const userIds = [...new Set(bookings.map((b) => b.userId))];
-    const priorNoShowCounts = new Map<string, number>();
-    const noShowGroups = await prisma.booking.groupBy({
-      by: ["userId"],
-      where: {
-        tenantId,
-        userId: { in: userIds },
-        status: "NO_SHOW",
-      },
-      _count: { _all: true },
-    });
-    for (const g of noShowGroups) {
-      priorNoShowCounts.set(g.userId, g._count._all);
-    }
-
     let proposalsEmitted = 0;
     let decisionsRecorded = 0;
+    let itemsProcessed = 0;
 
-    for (const booking of bookings) {
-      const slot = booking.slots[0];
-      if (!slot || !slot.timeSlot) {
-        // Bookings should always have slots from our schema, but be defensive
-        await this.recordDecision({
-          agentId: definition.id,
-          runId: run.id,
+    // Page through every upcoming booking in the window, `maxBookingsPerRun` at a time.
+    let cursorId: string | undefined;
+    for (;;) {
+      const bookings = await prisma.booking.findMany({
+        where: {
           tenantId,
-          action: AgentAction.NO_ACTION,
-          confidence: 0,
-          reasoning: "booking has no slot",
-          sourceMessageId: booking.id,
-        });
-        decisionsRecorded++;
-        continue;
+          status: { in: ["CONFIRMED", "RESERVED"] as BookingStatus[] },
+          date: {
+            gte: now.toISOString().slice(0, 10),
+            lte: windowEnd.toISOString().slice(0, 10),
+          },
+        },
+        include: {
+          user: { select: { createdAt: true } },
+          slots: { select: { timeSlot: true, rink: { select: { green: { select: { allWeather: true } } } } } },
+        },
+        orderBy: [{ date: "asc" }, { id: "asc" }],
+        ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+        take: config.maxBookingsPerRun,
+      });
+
+      if (bookings.length === 0) break;
+      cursorId = bookings[bookings.length - 1].id;
+
+      // Pre-compute prior no-show counts for all users in this batch (avoid N+1)
+      const userIds = [...new Set(bookings.map((b) => b.userId))];
+      const priorNoShowCounts = new Map<string, number>();
+      const noShowGroups = await prisma.booking.groupBy({
+        by: ["userId"],
+        where: {
+          tenantId,
+          userId: { in: userIds },
+          status: "NO_SHOW",
+        },
+        _count: { _all: true },
+      });
+      for (const g of noShowGroups) {
+        priorNoShowCounts.set(g.userId, g._count._all);
       }
 
-      // Build prediction request: all fields required by features.py
-      const req: NoShowPredictRequest = {
-        date: booking.date,
-        createdAt: booking.createdAt.toISOString(),
-        userCreatedAt: booking.user.createdAt.toISOString(),
-        timeSlot: slot.timeSlot,
-        isAllWeather: slot.rink?.green?.allWeather ?? false,
-        priorNoShowCount: priorNoShowCounts.get(booking.userId) ?? 0,
-      };
+      for (const booking of bookings) {
+        const slot = booking.slots[0];
+        if (!slot || !slot.timeSlot) {
+          // Bookings should always have slots from our schema, but be defensive
+          await this.recordDecision({
+            agentId: definition.id,
+            runId: run.id,
+            tenantId,
+            action: AgentAction.NO_ACTION,
+            confidence: 0,
+            reasoning: "booking has no slot",
+            sourceMessageId: booking.id,
+          });
+          decisionsRecorded++;
+          continue;
+        }
 
-      let probability = 0;
-      let modelVersion = "unknown";
-
-      try {
-        const res = await predictNoShow(req);
-        probability = res.probability;
-        modelVersion = res.modelVersion;
-
-        // Persist prediction for every scored booking (not just high-risk ones)
-        // so eval-noshow.ts can compute a full confusion matrix against actuals.
-        await prisma.bookingNoShowPrediction.upsert({
-          where: { bookingId_modelVersion: { bookingId: booking.id, modelVersion } },
-          create: { bookingId: booking.id, tenantId, modelVersion, probability },
-          update: { probability, predictedAt: new Date() },
-        });
-      } catch (e) {
-        const err = e as MlServiceError;
-        const msg = `ML predict failed: ${err.message}${err.status ? ` (${err.status})` : ""}`;
-        await this.recordDecision({
-          agentId: definition.id,
-          runId: run.id,
-          tenantId,
-          action: AgentAction.NO_ACTION,
-          confidence: 0,
-          reasoning: msg,
-          sourceMessageId: booking.id,
-        });
-        decisionsRecorded++;
-        continue;
-      }
-
-      // Emit if risk is high
-      if (probability >= config.riskThreshold) {
-        const payload: BookingNoShowReminderPayload = {
-          bookingId: booking.id,
-          userId: booking.userId,
-          bookingDate: booking.date,
-          probability,
-          modelVersion,
-          source: "high_risk",
+        // Build prediction request: all fields required by features.py
+        const req: NoShowPredictRequest = {
+          date: booking.date,
+          createdAt: booking.createdAt.toISOString(),
+          userCreatedAt: booking.user.createdAt.toISOString(),
+          timeSlot: slot.timeSlot,
+          isAllWeather: slot.rink?.green?.allWeather ?? false,
+          priorNoShowCount: priorNoShowCounts.get(booking.userId) ?? 0,
         };
 
-        await this.emitTenantProposal({
+        let probability = 0;
+        let modelVersion = "unknown";
+
+        try {
+          const res = await predictNoShow(req);
+          probability = res.probability;
+          modelVersion = res.modelVersion;
+
+          // Persist prediction for every scored booking (not just high-risk ones)
+          // so eval-noshow.ts can compute a full confusion matrix against actuals.
+          await prisma.bookingNoShowPrediction.upsert({
+            where: { bookingId_modelVersion: { bookingId: booking.id, modelVersion } },
+            create: { bookingId: booking.id, tenantId, modelVersion, probability },
+            update: { probability, predictedAt: new Date() },
+          });
+        } catch (e) {
+          const err = e as MlServiceError;
+          const msg = `ML predict failed: ${err.message}${err.status ? ` (${err.status})` : ""}`;
+          await this.recordDecision({
+            agentId: definition.id,
+            runId: run.id,
+            tenantId,
+            action: AgentAction.NO_ACTION,
+            confidence: 0,
+            reasoning: msg,
+            sourceMessageId: booking.id,
+          });
+          decisionsRecorded++;
+          continue;
+        }
+
+        // Emit if risk is high
+        if (probability >= config.riskThreshold) {
+          const payload: BookingNoShowReminderPayload = {
+            bookingId: booking.id,
+            userId: booking.userId,
+            bookingDate: booking.date,
+            probability,
+            modelVersion,
+            source: "high_risk",
+          };
+
+          await this.emitTenantProposal({
+            agentId: definition.id,
+            runId: run.id,
+            tenantId,
+            kind: BOOKING_NOSHOW_REMINDER_KIND,
+            payload,
+            confidence: probability, // Use the model's probability as proposal confidence
+            reasoning: `No-show risk estimated at ${(probability * 100).toFixed(0)}% (threshold: ${(config.riskThreshold * 100).toFixed(0)}%)`,
+          });
+          proposalsEmitted++;
+        }
+
+        // Record a decision for every booking processed (train on both high + low)
+        await this.recordDecision({
           agentId: definition.id,
           runId: run.id,
           tenantId,
-          kind: BOOKING_NOSHOW_REMINDER_KIND,
-          payload,
-          confidence: probability, // Use the model's probability as proposal confidence
-          reasoning: `No-show risk estimated at ${(probability * 100).toFixed(0)}% (threshold: ${(config.riskThreshold * 100).toFixed(0)}%)`,
+          action: probability >= config.riskThreshold ? AgentAction.PREDICTED_TASK : AgentAction.NO_ACTION,
+          confidence: probability,
+          reasoning: `ML no-show prediction: ${(probability * 100).toFixed(1)}%`,
+          sourceMessageId: booking.id,
         });
-        proposalsEmitted++;
+        decisionsRecorded++;
       }
-
-      // Record a decision for every booking processed (train on both high + low)
-      await this.recordDecision({
-        agentId: definition.id,
-        runId: run.id,
-        tenantId,
-        action: probability >= config.riskThreshold ? AgentAction.PREDICTED_TASK : AgentAction.NO_ACTION,
-        confidence: probability,
-        reasoning: `ML no-show prediction: ${(probability * 100).toFixed(1)}%`,
-        sourceMessageId: booking.id,
-      });
-      decisionsRecorded++;
+      itemsProcessed += bookings.length;
+      if (bookings.length < config.maxBookingsPerRun) break;
     }
 
     return {
-      itemsProcessed: bookings.length,
+      itemsProcessed,
       tasksAffected: proposalsEmitted,
       decisionsRecorded,
       extras: { proposalsEmitted },
