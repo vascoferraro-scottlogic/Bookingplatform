@@ -4,9 +4,9 @@ A multi-tenant platform for clubs and community organisations.
 
 ## Get Started Locally
 
-Prerequisites: Node.js 22 and npm. Use either a local PostgreSQL 16 install or
-Docker for the database. The Docker instructions below use `docker run`
-directly and do not depend on the repository's Compose files.
+Prerequisites: Node.js 22.12 or newer and npm. Use either a local PostgreSQL 16
+install or Docker for the database. The Docker instructions below use
+`docker run` directly and do not depend on the repository's Compose files.
 
 1. Install PostgreSQL 16 on Windows:
 
@@ -20,26 +20,34 @@ directly and do not depend on the repository's Compose files.
   superuser. This is the database administrator password, not the app login
   password. You will enter it when running the `psql` commands below.
 
+  The installer does not add PostgreSQL to your `PATH`, so `psql` will not be
+  found yet. Either add `C:\Program Files\PostgreSQL\16\bin` to your `PATH` and
+  open a new terminal, or add it for the current session only:
+
+  ```powershell
+  $env:Path += ";C:\Program Files\PostgreSQL\16\bin"
+  ```
+
+  If another PostgreSQL version is already installed, it probably owns port
+  5432 and the new one will have been given 5433 (check the port in the
+  installer, or `Get-Service postgresql*`). Add `-p 5433` to the `psql` commands
+  below and use that port in `DATABASE_URL`.
+
   To use Docker instead, skip the native install and follow the Docker note in
   step 3.
 
-2. Create `.env`, configure local values, then install app dependencies:
+2. Create `.env` **before** installing dependencies (the install runs
+  `prisma generate`, which needs it), then install:
 
   ```powershell
-  if (!(Test-Path .env)) { Copy-Item .env.example .env }
+  npm run setup:env
   ```
 
-  In `.env`, set `DATABASE_URL` to
-  `postgresql://booking:booking@localhost:5432/bookingplatform`, set
-  `NEXTAUTH_URL` to `http://localhost:3000`, and set `AGENT_LLM_PROVIDER` to
-  `stub`. Generate a local auth secret with:
-
-  ```powershell
-  node -p "require('node:crypto').randomBytes(32).toString('base64')"
-  ```
-  
-  Put the generated value in `NEXTAUTH_SECRET`. Keep any existing `.env` and
-  update these values rather than overwriting it.
+  This copies `.env.example` to `.env` with the local defaults (`DATABASE_URL`
+  on port 5432, `NEXTAUTH_URL` `http://localhost:3000`,
+  `AGENT_LLM_PROVIDER=stub`) and a freshly generated `NEXTAUTH_SECRET`. It never
+  overwrites an existing `.env`; if you already have one, set those values by
+  hand. If your PostgreSQL is on another port, edit `DATABASE_URL`.
 
   Finally, install the dependencies:
   ```powershell
@@ -79,16 +87,60 @@ directly and do not depend on the repository's Compose files.
   Open <http://localhost:3000> and sign in with the local demo platform
   account: `admin@wlbooking.com` / `admin123`.
 
-The demo data uses fixed dates that stay current until **31 December 2026**:
-the Main Green has a 2026 season override running to year end, and the sample
-events fall in November and December. After that, the Main Green shows as
-closed and the sample events are in the past. Either update the dates in
-`prisma/seed.ts` and re-seed, or sign in as `admin@lakeview.club` / `club123`
-and add a season override under **Dashboard → Greens** and new events under
-**Dashboard → Events**. The seed only adds missing records, so an existing
-database keeps its old dates until it is reset (`npx prisma migrate reset`).
+The demo data is dated relative to the day you run the seed: the Main Green has
+season overrides covering this year and next, and the sample events fall in the
+next few weeks. Re-running `npm run db:seed` is safe at any time and refreshes
+those dates (the sample events are matched by title), so run it again if the
+events have drifted into the past.
 
 The demo credentials are for local development only. Optional integrations
 such as Unleash, ML, and external AI providers are not needed for this setup.
 
-For the AWS hosting (how it is built) see [docs/hosting-aws.md](docs/hosting-aws.md); to run, reset or take it down see [docs/aws-operations.md](docs/aws-operations.md).
+## Seeded accounts
+
+The club is `lakeview-bowls`.
+
+| Account | Password | Role |
+|---|---|---|
+| `admin@wlbooking.com` | `admin123` | Platform admin |
+| `admin@lakeview.club` | `club123` | Club admin |
+| `user@lakeview.club` | `user123` | Member |
+| `maint@lakeview.club` | `user123` | Maintenance |
+
+## Running the tests
+
+```powershell
+npm test
+```
+
+The unit tests need **no database**: Jest ignores `.env`, mocks Prisma and
+refuses to touch a real database, so running them never affects your dev data.
+Also useful: `npx tsc --noEmit` (type-check) and `npm run lint`.
+
+## Testing the API with Postman
+
+The API uses a next-auth session cookie. To get one:
+
+1. `GET http://localhost:3000/api/auth/csrf` and note `csrfToken` in the JSON.
+   Keep Postman's cookie jar on (it stores the CSRF cookie).
+2. `POST http://localhost:3000/api/auth/callback/credentials` with body type
+   **x-www-form-urlencoded** and the fields `csrfToken`, `email` and `password`
+   (a seeded account above). A successful login sets the
+   `next-auth.session-token` cookie, which Postman sends on later requests to
+   `localhost:3000` automatically.
+3. Check it with `GET http://localhost:3000/api/auth/session`, which returns the
+   signed-in user.
+
+To put the demo data back to a known state, run `npm run db:seed` again. It
+restores the seeded accounts and dates but does not delete anything you
+created. To start from scratch, run `npx prisma migrate reset --force` then
+`npm run db:seed` (this **erases the whole database**).
+
+## Python (optional, ML scripts only)
+
+`npm run ml:serve` and `npm run ml:train` need Python 3 with the packages in
+`ml/requirements.txt`. On Windows install Python from python.org (not the
+Microsoft Store stub) and make sure `python` is on your `PATH`. Not needed for
+the basic setup.
+
+For the AWS hosting (how it is built) see [hosting-aws.md](hosting-aws.md); to run, reset or take it down see [aws-operations.md](aws-operations.md).
