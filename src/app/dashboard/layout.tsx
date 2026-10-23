@@ -33,6 +33,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [insightsEnabled, setInsightsEnabled] = useState(false);
   const [bookingsEnabled, setBookingsEnabled] = useState(false);
   const [agentEnabled, setAgentEnabled] = useState(false);
+  const [maintenanceEnabled, setMaintenanceEnabled] = useState(false);
 
   const role = (session?.user as any)?.role;
   const acting = (session?.user as any)?.actingAs as ActingAs;
@@ -68,6 +69,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         setInsightsEnabled(!!(flags && flags.businessInsights));
         setBookingsEnabled(!!(flags && flags.bookings));
         setAgentEnabled(!!(flags && flags.agent));
+        setMaintenanceEnabled(!!(flags && flags.maintenance));
       })
       .catch(() => {});
     if (isTenantAdminEffective) {
@@ -132,7 +134,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link href="/dashboard" className="hover:bg-green-700 rounded px-3 py-2">Dashboard</Link>
               {bookingsEnabled && <Link href="/dashboard/bookings" className="hover:bg-green-700 rounded px-3 py-2">Bookings</Link>}
               {eventsEnabled && <Link href="/dashboard/events" className="hover:bg-green-700 rounded px-3 py-2">Events</Link>}
-              {agentEnabled && <Link href="/dashboard/maintenance" className="hover:bg-green-700 rounded px-3 py-2">Maintenance</Link>}
+              {maintenanceEnabled && <Link href="/dashboard/maintenance" className="hover:bg-green-700 rounded px-3 py-2">Maintenance</Link>}
               {agentEnabled && isMaintenanceEffective && <Link href="/dashboard/agents" className="hover:bg-green-700 rounded px-3 py-2">🤖 Agents</Link>}
               {agentEnabled && isMaintenanceEffective && <Link href="/dashboard/agents/inbox" className="hover:bg-green-700 rounded px-3 py-2">📥 Agent Inbox</Link>}
               <Link href="/dashboard/messaging" className="hover:bg-green-700 rounded px-3 py-2">Messaging</Link>
