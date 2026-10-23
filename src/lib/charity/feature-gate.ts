@@ -1,4 +1,4 @@
-import type { Country } from "@prisma/client";
+import type { Country, OrganisationType } from "@prisma/client";
 import { isFeatureEnabled } from "@/lib/features";
 import { prisma } from "@/lib/prisma";
 
@@ -8,9 +8,28 @@ export const CHARITY_FEATURE_KEY = "charity";
 /** Countries where the Charity Accounts module is supported. */
 export const CHARITY_SUPPORTED_COUNTRIES: Country[] = ["GB", "NI"];
 
+/**
+ * Legal forms that are charities (FR-CHA-001). CASCs, companies and private
+ * clubs are not charities, so they never get Charity Accounts.
+ */
+export const CHARITY_ELIGIBLE_TYPES: OrganisationType[] = ["REGISTERED_CHARITY", "CIO", "SCIO"];
+
+export function isCharityEligible(
+  country: Country | null | undefined,
+  organisationType: OrganisationType | null | undefined,
+): boolean {
+  return (
+    !!country &&
+    !!organisationType &&
+    CHARITY_SUPPORTED_COUNTRIES.includes(country) &&
+    CHARITY_ELIGIBLE_TYPES.includes(organisationType)
+  );
+}
+
 export type CharityGateFailure =
   | { ok: false; reason: "TENANT_NOT_FOUND" }
   | { ok: false; reason: "COUNTRY_UNSUPPORTED"; country: Country }
+  | { ok: false; reason: "LEGAL_FORM_UNSUPPORTED" }
   | { ok: false; reason: "FEATURE_DISABLED" };
 
 export type CharityGateResult =
@@ -32,11 +51,14 @@ export type CharityGateResult =
 export async function checkCharityGate(tenantId: string): Promise<CharityGateResult> {
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
-    select: { id: true, country: true },
+    select: { id: true, country: true, organisationType: true },
   });
   if (!tenant) return { ok: false, reason: "TENANT_NOT_FOUND" };
   if (!CHARITY_SUPPORTED_COUNTRIES.includes(tenant.country)) {
     return { ok: false, reason: "COUNTRY_UNSUPPORTED", country: tenant.country };
+  }
+  if (!tenant.organisationType || !CHARITY_ELIGIBLE_TYPES.includes(tenant.organisationType)) {
+    return { ok: false, reason: "LEGAL_FORM_UNSUPPORTED" };
   }
   const enabled = await isFeatureEnabled(tenantId, CHARITY_FEATURE_KEY);
   if (!enabled) return { ok: false, reason: "FEATURE_DISABLED" };

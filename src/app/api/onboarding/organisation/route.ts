@@ -7,9 +7,9 @@ import {
 } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
-import { setFeatureFlag } from "@/lib/features";
+import { isFeatureEnabled, setFeatureFlag } from "@/lib/features";
 import { seedCharityDefaults } from "@/lib/charity/seed";
-import { CHARITY_FEATURE_KEY } from "@/lib/charity/feature-gate";
+import { CHARITY_FEATURE_KEY, isCharityEligible } from "@/lib/charity/feature-gate";
 import type { Country, OrganisationType, CharityRegulator, Vertical } from "@prisma/client";
 
 const ALLOWED_COUNTRIES = new Set<Country>(["GB", "NI", "OTHER"]);
@@ -30,17 +30,6 @@ const ALLOWED_VERTICALS = new Set<Vertical>([
 ]);
 // Verticals that don't use the bookings or maintenance-agent capability.
 const ADMIN_ONLY_VERTICALS = new Set<Vertical>(["CHARITY_ADMIN"]);
-
-// Org types whose holders need charity-style accounting (R&P, funds,
-// regulator-shaped categories). CASC is included because while CASCs aren't
-// charities, the same chart of accounts is the right starting point for them
-// and HMRC reporting expectations are similar enough.
-const CHARITY_STYLE_TYPES = new Set<OrganisationType>([
-  "REGISTERED_CHARITY",
-  "CIO",
-  "SCIO",
-  "CASC",
-]);
 
 /**
  * Infer the most likely regulator from country + org type. SCIO is always
@@ -63,16 +52,15 @@ function inferRegulator(
  *
  * Single endpoint for chapter 2 ("Your organisation"). Persists the KYC
  * answers AND fires the side-effects in one place: enabling the `charity`
- * feature flag for charity-style org types in supported jurisdictions, and
+ * feature flag for charity legal forms (not CASC) in supported jurisdictions, and
  * seeding CharitySettings + chart of accounts so the charity dashboard is
  * usable on first visit.
  *
  * Idempotent: re-PATCHing with the same answers is a no-op for the side
  * effects (flag set is upsert; settings upsert; seedCharityDefaults filters
- * existing rows). The flag is only ever turned ON automatically — never
- * back off — to avoid surprising data loss if a tenant edits their
- * organisation type after recording transactions. Disabling charity is an
- * explicit platform-admin action via the feature-flag UI.
+ * existing rows). The flag is recomputed from the legal form on every save: it is
+ * switched OFF when the tenant is no longer charity-eligible. Recorded charity
+ * data is kept, only access is withdrawn.
  *
  * See plan: /memories/session/plan.md (Onboarding KYC).
  */
@@ -166,17 +154,14 @@ export async function PATCH(req: NextRequest) {
   // feature and prepare CharitySettings + chart of accounts.
   let charityEnabled = false;
   let charitySettingsSeeded = false;
-  const isCharityStyle = CHARITY_STYLE_TYPES.has(organisationType);
-  const supportedCountry = country === "GB" || country === "NI";
-
-  if (isCharityStyle && supportedCountry) {
+  if (isCharityEligible(country, organisationType)) {
     await setFeatureFlag(tenantId, CHARITY_FEATURE_KEY, true);
     charityEnabled = true;
 
     const existing = await prisma.charitySettings.findUnique({ where: { tenantId } });
     if (!existing) {
       const regulator = inferRegulator(country, organisationType);
-      // regulator is non-null here because supportedCountry === true.
+      // regulator is non-null here because the country is GB or NI.
       if (regulator) {
         await prisma.charitySettings.create({
           data: {
@@ -190,6 +175,9 @@ export async function PATCH(req: NextRequest) {
         charitySettingsSeeded = true;
       }
     }
+  } else if (await isFeatureEnabled(tenantId, CHARITY_FEATURE_KEY)) {
+    // No longer eligible (e.g. legal form changed): switch charity off.
+    await setFeatureFlag(tenantId, CHARITY_FEATURE_KEY, false);
   }
 
   logAudit({

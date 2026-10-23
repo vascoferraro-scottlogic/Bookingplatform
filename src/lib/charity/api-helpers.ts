@@ -20,6 +20,14 @@ export function charityGateError(result: CharityGateResult): NextResponse | null
         },
         { status: 403 },
       );
+    case "LEGAL_FORM_UNSUPPORTED":
+      return NextResponse.json(
+        {
+          error: "CHARITY_LEGAL_FORM_UNSUPPORTED",
+          message: "Charity Accounts is only available to charities (registered charity, CIO or SCIO).",
+        },
+        { status: 403 },
+      );
     case "FEATURE_DISABLED":
       return NextResponse.json(
         {
