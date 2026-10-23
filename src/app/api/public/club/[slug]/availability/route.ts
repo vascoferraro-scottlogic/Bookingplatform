@@ -15,7 +15,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   const tenant = await prisma.tenant.findUnique({
     where: { slug },
-    select: { id: true, active: true, openingTime: true, closingTime: true },
+    select: { id: true, active: true, openingTime: true, closingTime: true, timezone: true },
   });
 
   if (!tenant || !tenant.active) {
@@ -29,10 +29,11 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!date) return jsonError("date query param required");
 
   const greens = await prisma.green.findMany({
-    where: { tenantId: tenant.id },
+    where: { tenantId: tenant.id, archivedAt: null },
     include: {
       seasons: { select: { year: true, startDate: true, endDate: true } },
       rinks: {
+        where: { archivedAt: null },
         include: {
           bookingSlots: {
             where: {
@@ -53,9 +54,9 @@ export async function GET(req: NextRequest, { params }: Params) {
     id: g.id,
     name: g.name,
     season: {
-      open: isGreenOpenOn(g, date),
+      open: isGreenOpenOn(g, date, tenant.timezone ?? undefined),
       allWeather: g.allWeather,
-      window: seasonWindowForDate(g, date),
+      window: seasonWindowForDate(g, date, tenant.timezone ?? undefined),
     },
     rinks: g.rinks.map((r) => ({
       id: r.id,

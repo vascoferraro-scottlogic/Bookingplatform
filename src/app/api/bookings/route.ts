@@ -207,10 +207,10 @@ export async function POST(req: NextRequest) {
     return jsonError("date is in the past", 400);
   }
 
-  // ── Validate rinks belong to booking tenant ──────────────────
+  // ── Validate rinks belong to booking tenant (archived greens/rinks aren't bookable) ──
   const rinkIds: string[] = [...new Set(slots.map((s) => s.rinkId))];
   const rinks = await prisma.rink.findMany({
-    where: { id: { in: rinkIds }, green: { tenantId: bookingTenantId } },
+    where: { id: { in: rinkIds }, archivedAt: null, green: { tenantId: bookingTenantId, archivedAt: null } },
     include: {
       green: {
         select: {
@@ -233,7 +233,7 @@ export async function POST(req: NextRequest) {
     if (checkedGreens.has(rink.greenId)) continue;
     checkedGreens.add(rink.greenId);
     const g = rink.green as GreenSeasonInfo & { name: string };
-    if (!isGreenOpenOn(g, date)) {
+    if (!isGreenOpenOn(g, date, bookingTenant?.timezone ?? undefined)) {
       return jsonError(
         `${g.name} is closed for the season on ${date}`,
         400,

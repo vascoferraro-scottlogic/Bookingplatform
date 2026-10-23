@@ -143,7 +143,7 @@ describe("Cross-club booking via federation", () => {
       }),
     );
     expect(prismaMock.rink.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [AWAY_RINK] }, green: { tenantId: AWAY } } }),
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: [AWAY_RINK] }, green: { tenantId: AWAY, archivedAt: null } }) }),
     );
   });
 

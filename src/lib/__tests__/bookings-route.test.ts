@@ -79,7 +79,7 @@ describe("POST /api/bookings - self booking", () => {
     await book({ date: isoDateFromToday(30), slots: [{ rinkId: RINK, timeSlot: "09:00" }] });
 
     expect(prismaMock.rink.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [RINK] }, green: { tenantId: TENANT } } }),
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: [RINK] }, green: { tenantId: TENANT, archivedAt: null } }) }),
     );
   });
 });

@@ -19,13 +19,14 @@ export async function GET(req: NextRequest) {
   const [tenant, greens] = await Promise.all([
     prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { openingTime: true, closingTime: true },
+      select: { openingTime: true, closingTime: true, timezone: true },
     }),
     prisma.green.findMany({
-      where: { tenantId },
+      where: { tenantId, archivedAt: null },
       include: {
         seasons: { select: { year: true, startDate: true, endDate: true } },
         rinks: {
+          where: { archivedAt: null },
           include: {
             bookingSlots: {
               where: {
@@ -44,8 +45,8 @@ export async function GET(req: NextRequest) {
 
   // Annotate each green with per-green season info for the requested date
   const annotatedGreens = greens.map((g) => {
-    const open = isGreenOpenOn(g, date);
-    const window = seasonWindowForDate(g, date);
+    const open = isGreenOpenOn(g, date, tenant?.timezone ?? undefined);
+    const window = seasonWindowForDate(g, date, tenant?.timezone ?? undefined);
     return {
       ...g,
       season: {
