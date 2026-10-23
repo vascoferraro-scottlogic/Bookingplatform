@@ -1,5 +1,7 @@
 import { resolveTenantId } from "@/lib/tenant";
 import { NextRequest } from "next/server";
+import type { Role } from "@prisma/client";
+import type { ActingAsClaim } from "@/lib/roles";
 
 function mockRequest(url = "http://localhost/api/test"): NextRequest {
   return new NextRequest(url);
@@ -9,7 +11,7 @@ interface SessionOverrides {
   id?: string;
   tenantId?: string | null;
   role?: string;
-  actingAs?: { tenantId: string; role: string; impersonationId: string; startedAt: string } | null;
+  actingAs?: ActingAsClaim | null;
 }
 
 function mockSession(overrides: SessionOverrides = {}) {
@@ -17,7 +19,7 @@ function mockSession(overrides: SessionOverrides = {}) {
     user: {
       id: overrides.id ?? "u1",
       tenantId: "tenantId" in overrides ? overrides.tenantId! : "tenant-1",
-      role: (overrides.role ?? "USER") as any,
+      role: (overrides.role ?? "USER") as Role,
       actingAs: overrides.actingAs ?? null,
     },
   };

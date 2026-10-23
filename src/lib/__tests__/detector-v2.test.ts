@@ -123,6 +123,8 @@ function makeFakeProvider(classifications: Array<{
   suggestedDescription?: string;
   confidence?: number;
   reasoning?: string;
+  toneSeverity?: number;
+  toneLabel?: string;
 }>) {
   return {
     name: "fake",

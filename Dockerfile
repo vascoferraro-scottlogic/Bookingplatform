@@ -8,8 +8,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 # Schema must be present before `npm ci` (postinstall runs `prisma generate`).
-# .npmrc carries legacy-peer-deps=true — required for ts-jest vs typescript 6.
-COPY package.json package-lock.json .npmrc ./
+COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci
 

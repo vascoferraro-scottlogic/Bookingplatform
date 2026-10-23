@@ -37,7 +37,7 @@ function userSession() {
   };
 }
 
-function makeRequest(url = "http://localhost/api/events", opts?: RequestInit): NextRequest {
+function makeRequest(url = "http://localhost/api/events", opts?: ConstructorParameters<typeof NextRequest>[1]): NextRequest {
   return new NextRequest(url, opts);
 }
 

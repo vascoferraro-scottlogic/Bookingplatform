@@ -116,7 +116,7 @@ describe("sendToUser", () => {
     expect(w2.write).toHaveBeenCalledTimes(1);
 
     // Verify SSE format
-    const payload = w1.write.mock.calls[0][0] as Uint8Array;
+    const payload = (w1.write as jest.Mock).mock.calls[0][0] as Uint8Array;
     const decoded = new TextDecoder().decode(payload);
     expect(decoded).toBe('event: message\ndata: {"text":"hello"}\n\n');
 
