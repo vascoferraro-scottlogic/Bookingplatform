@@ -8,7 +8,7 @@ import WeatherCard from "@/components/booking/WeatherCard";
 import { useTrack } from "@/components/TrackingProvider";
 import { getClientEffectiveRole } from "@/lib/effective-role-client";
 import { useTranslations } from "next-intl";
-import { generateTimeSlots } from "@/lib/time-slots";
+import { generateTimeSlots, DEFAULT_OPENING_TIME, DEFAULT_CLOSING_TIME } from "@/lib/time-slots";
 import { bookingStart, startsMoreThanHoursAway, CANCELLATION_WINDOW_HOURS } from "@/lib/booking-time";
 
 type Tenant = { id: string; name: string; slug: string };
@@ -118,9 +118,10 @@ export default function BookingsPage() {
     loadData(selectedTenant || undefined);
   }, [selectedTenant, isPlatformAdmin, date]);
 
-  const timeSlots = tenantConfig
-    ? generateTimeSlots(tenantConfig.openingTime, tenantConfig.closingTime)
-    : ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+  const timeSlots = generateTimeSlots(
+    tenantConfig?.openingTime ?? DEFAULT_OPENING_TIME,
+    tenantConfig?.closingTime ?? DEFAULT_CLOSING_TIME,
+  );
 
   // Booking times are club local time; the availability config carries no
   // timezone, so use the default club timezone (Europe/London).
@@ -263,8 +264,8 @@ export default function BookingsPage() {
             })),
           }))}
           config={{
-            openingTime: tenantConfig?.openingTime ?? "09:00",
-            closingTime: tenantConfig?.closingTime ?? "18:00",
+            openingTime: tenantConfig?.openingTime ?? DEFAULT_OPENING_TIME,
+            closingTime: tenantConfig?.closingTime ?? DEFAULT_CLOSING_TIME,
           }}
           date={date}
           onDateChange={setDate}
