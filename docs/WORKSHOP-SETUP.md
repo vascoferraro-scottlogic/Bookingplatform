@@ -50,7 +50,7 @@ Open a terminal and run: `psql --version`
 
 1.  Download the Windows installer from https://www.postgresql.org/download/windows/ (EDB installer).
 2.  Run the installer, accepting defaults. **Remember the superuser password** you set.
-3.  The installer will also install **pgAdmin** (a GUI) and **psql** (a command-line tool). It does **not** add `psql` to your `PATH`: add `C:Program FilesPostgreSQLin` to it (or use the SQL Shell from the Start Menu).
+3.  The installer will also install **pgAdmin** (a GUI) and **psql** (a command-line tool). It does **not** add `psql` to your `PATH`: add `C:\Program Files\PostgreSQL\16\bin` to it (or use the SQL Shell from the Start Menu).
 
 #### Step 1.3: Ensure the service is running
 
