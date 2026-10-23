@@ -160,13 +160,41 @@ afterEach(() => {
 // ── Checkout route ──────────────────────────────────────────────
 
 describe("POST /api/bookings/[id]/checkout", () => {
-  test("[B-32] FR-PAY-001 – the booking owner cannot mark their own payment PAID (403, no PAID write)", async () => {
+  // The owner may START a provider checkout (D-01) but never set PAID themselves.
+  test("[B-32] FR-PAY-001 – the booking owner cannot mark their own payment PAID directly (body status ignored, no PAID write)", async () => {
     arrange(makeBooking({ status: "CONFIRMED", payment: paidPayment({ status: "PENDING" }) }));
+    providerCheckout.mockResolvedValue({ checkoutUrl: "https://stub.payments.local/checkout/bpay-1" });
     signInAs(MEMBER);
+
+    await CHECKOUT(
+      jsonRequest("POST", `/api/bookings/${BOOKING}/checkout`, { status: "PAID" }),
+      routeParams({ id: BOOKING }),
+    );
+
+    expect(paymentStatusWrites()).not.toContain("PAID");
+  });
+
+  test("[B-32] FR-PAY-001 – a member who is not the owner (and not a manager) gets 403 from checkout", async () => {
+    arrange(makeBooking({ status: "CONFIRMED", payment: paidPayment({ status: "PENDING" }) }));
+    signInAs({ id: "member-2", role: "USER" as const, tenantId: TENANT });
 
     const { status } = await readJson(await checkout());
 
     expect(status).toBe(403);
+    expect(providerCheckout).not.toHaveBeenCalled();
+    expect(paymentStatusWrites()).not.toContain("PAID");
+  });
+
+  test("[B-32] D-01 – the owner can start a provider checkout for their CONFIRMED unpaid booking", async () => {
+    arrange(makeBooking({ status: "CONFIRMED", payment: paidPayment({ status: "PENDING" }) }));
+    providerCheckout.mockResolvedValue({ checkoutUrl: "https://stub.payments.local/checkout/bpay-1" });
+    signInAs(MEMBER);
+
+    const { status, body } = await readJson(await checkout());
+
+    expect(status).toBe(200);
+    expect(providerCheckout).toHaveBeenCalledWith(PAYMENT, 600, "GBP");
+    expect(body.checkoutUrl).toBe("https://stub.payments.local/checkout/bpay-1");
     expect(paymentStatusWrites()).not.toContain("PAID");
   });
 
