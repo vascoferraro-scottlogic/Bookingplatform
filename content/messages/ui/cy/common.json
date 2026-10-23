@@ -1,4 +1,7 @@
 {
+  "pwa": {
+    "install": "[cy] Install app"
+  },
   "nav": {
     "bookings": "[cy] Bookings",
     "notifications": "[cy] Notifications",
