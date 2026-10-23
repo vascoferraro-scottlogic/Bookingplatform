@@ -68,7 +68,8 @@
     "paymentsHeader": "Payments",
     "bankBalance": "Bank balance at year end",
     "saveBankBalance": "Save balance",
-    "bankBalanceError": "Bank balance must be a number, e.g. 1234.56"
+    "bankBalanceError": "Bank balance must be a number, e.g. 1234.56",
+    "exportSoalCsv": "⬇ Statement of Assets & Liabilities (CSV)"
   },
   "settings": {
     "title": "Charity Settings",

@@ -68,7 +68,8 @@
     "paymentsHeader": "[cy] Payments",
     "bankBalance": "[cy] Bank balance at year end",
     "saveBankBalance": "[cy] Save balance",
-    "bankBalanceError": "[cy] Bank balance must be a number, e.g. 1234.56"
+    "bankBalanceError": "[cy] Bank balance must be a number, e.g. 1234.56",
+    "exportSoalCsv": "[cy] ⬇ Statement of Assets & Liabilities (CSV)"
   },
   "settings": {
     "title": "[cy] Charity Settings",

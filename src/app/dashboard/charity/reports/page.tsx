@@ -214,6 +214,11 @@ export default function CharityReportsPage() {
     window.open(`/api/charity/reports?yearId=${yearId}&format=csv`, "_blank");
   }
 
+  function downloadSoalCSV() {
+    if (!yearId) return;
+    window.open(`/api/charity/reports?yearId=${yearId}&format=soal-csv`, "_blank");
+  }
+
   const yearLocked = report?.year.status === "LOCKED";
 
   const visibleFunds = useMemo(() => report?.receiptsAndPayments.funds ?? [], [report]);
@@ -248,6 +253,13 @@ export default function CharityReportsPage() {
             className="px-3 py-2 bg-green-700 text-white text-sm rounded disabled:opacity-50"
           >
             {t("reports.exportCsv")}
+          </button>
+          <button
+            onClick={downloadSoalCSV}
+            disabled={!yearId}
+            className="px-3 py-2 bg-green-700 text-white text-sm rounded disabled:opacity-50"
+          >
+            {t("reports.exportSoalCsv")}
           </button>
         </div>
       </div>
