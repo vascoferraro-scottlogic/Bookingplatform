@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSessionOrFail, getEffective } from "@/lib/api-utils";
+import { getSessionOrFail, getEffective, jsonError } from "@/lib/api-utils";
 import { hasRole, isPlatformAdmin as isPlatformAdminRole } from "@/lib/roles";
 import type { Prisma } from "@prisma/client";
 
@@ -16,8 +16,13 @@ export async function GET(req: NextRequest) {
   if (error) return error;
 
   const params = req.nextUrl.searchParams;
-  const page = Math.max(1, parseInt(params.get("page") ?? "1", 10));
-  const limit = Math.min(200, Math.max(1, parseInt(params.get("limit") ?? "50", 10)));
+  const pageRaw = parseInt(params.get("page") ?? "1", 10);
+  const limitRaw = parseInt(params.get("limit") ?? "50", 10);
+  if (Number.isNaN(pageRaw) || Number.isNaN(limitRaw)) {
+    return jsonError("page and limit must be numbers", 400);
+  }
+  const page = Math.max(1, pageRaw);
+  const limit = Math.min(200, Math.max(1, limitRaw));
   const skip = (page - 1) * limit;
 
   const where: Prisma.AuditEventWhereInput = {};
@@ -46,10 +51,15 @@ export async function GET(req: NextRequest) {
 
   const from = params.get("from");
   const to = params.get("to");
-  if (from || to) {
+  const fromDate = from ? new Date(from) : null;
+  const toDate = to ? new Date(to) : null;
+  if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
+    return jsonError("from and to must be valid dates", 400);
+  }
+  if (fromDate || toDate) {
     where.timestamp = {};
-    if (from) where.timestamp.gte = new Date(from);
-    if (to) where.timestamp.lte = new Date(to);
+    if (fromDate) where.timestamp.gte = fromDate;
+    if (toDate) where.timestamp.lte = toDate;
   }
 
   const actorId = params.get("actorId");
