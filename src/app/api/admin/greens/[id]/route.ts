@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
+import { clubDateString, DEFAULT_CLUB_TIMEZONE, isValidMMDD } from "@/lib/season";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -35,6 +36,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     seasonEndMMDD?: string | null;
   };
   if (name !== undefined && (!name || !name.trim())) return jsonError("name must not be empty");
+  for (const v of [seasonStartMMDD, seasonEndMMDD]) {
+    if (v?.trim() && !isValidMMDD(v.trim())) return jsonError("Season dates must be valid MM-DD values", 400);
+  }
 
   try {
     const updated = await prisma.green.update({
@@ -56,7 +60,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/** Delete a green. Blocked if any rink has future booking slots. */
+/** Delete a green. Blocked (409) if any rink has future active bookings; otherwise archived so booking history is kept. */
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
   const { session, error } = await getSessionOrFail();
@@ -74,8 +78,10 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
   // Check for future bookings on any rink in this green
   const rinkIds = green.rinks.map((r) => r.id);
   if (rinkIds.length > 0) {
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+    const today = clubDateString(new Date().toISOString(), tenant?.timezone ?? DEFAULT_CLUB_TIMEZONE);
     const futureSlots = await prisma.bookingSlot.count({
-      where: { rinkId: { in: rinkIds }, date: { gte: new Date() } },
+      where: { rinkId: { in: rinkIds }, booking: { date: { gte: today }, status: { notIn: ["CANCELLED", "REFUNDED"] } } },
     });
     if (futureSlots > 0) {
       return jsonError("Cannot delete green with future bookings. Cancel or reassign them first.", 409);
@@ -83,12 +89,10 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
   }
 
   try {
-    // Delete rinks first (cascade), then the green
-    if (rinkIds.length > 0) {
-      await prisma.bookingSlot.deleteMany({ where: { rinkId: { in: rinkIds } } });
-      await prisma.rink.deleteMany({ where: { greenId: id } });
-    }
-    await prisma.green.delete({ where: { id } });
+    // Soft delete: archive the green and its rinks, keeping booking history
+    const archivedAt = new Date();
+    await prisma.rink.updateMany({ where: { greenId: id, archivedAt: null }, data: { archivedAt } });
+    await prisma.green.update({ where: { id }, data: { archivedAt } });
 
     logAudit({ session, action: "green.deleted", entity: "Green", entityId: id, tenantId, meta: { name: green.name } });
 

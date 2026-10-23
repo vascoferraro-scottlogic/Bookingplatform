@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
+import { clubDateString, DEFAULT_CLUB_TIMEZONE } from "@/lib/season";
 
 type Ctx = { params: Promise<{ id: string; rinkId: string }> };
 
@@ -47,7 +48,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/** Delete a rink. Blocked if it has future booking slots. */
+/** Delete a rink. Blocked (409) if it has future active bookings; otherwise archived so booking history is kept. */
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const { id: greenId, rinkId } = await ctx.params;
   const { session, error } = await getSessionOrFail();
@@ -64,16 +65,17 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     return jsonError("Rink not found", 404);
   }
 
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } });
+  const today = clubDateString(new Date().toISOString(), tenant?.timezone ?? DEFAULT_CLUB_TIMEZONE);
   const futureSlots = await prisma.bookingSlot.count({
-    where: { rinkId, date: { gte: new Date() } },
+    where: { rinkId, booking: { date: { gte: today }, status: { notIn: ["CANCELLED", "REFUNDED"] } } },
   });
   if (futureSlots > 0) {
     return jsonError("Cannot delete rink with future bookings. Cancel or reassign them first.", 409);
   }
 
   try {
-    await prisma.bookingSlot.deleteMany({ where: { rinkId } });
-    await prisma.rink.delete({ where: { id: rinkId } });
+    await prisma.rink.update({ where: { id: rinkId }, data: { archivedAt: new Date() } });
 
     logAudit({ session, action: "rink.deleted", entity: "Rink", entityId: rinkId, tenantId, meta: { name: rink.name, greenId } });
 

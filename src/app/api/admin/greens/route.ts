@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
+import { isValidMMDD } from "@/lib/season";
 
 /** List greens (with rinks) for the current tenant. */
 export async function GET(req: NextRequest) {
@@ -17,9 +18,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const greens = await prisma.green.findMany({
-      where: { tenantId },
+      where: { tenantId, archivedAt: null },
       include: {
-        rinks: { orderBy: { name: "asc" } },
+        rinks: { where: { archivedAt: null }, orderBy: { name: "asc" } },
         seasons: { orderBy: { year: "asc" } },
       },
       orderBy: { name: "asc" },
@@ -56,6 +57,9 @@ export async function POST(req: NextRequest) {
     seasonEndMMDD?: string;
   };
   if (!name || !name.trim()) return jsonError("name is required");
+  for (const v of [seasonStartMMDD, seasonEndMMDD]) {
+    if (v?.trim() && !isValidMMDD(v.trim())) return jsonError("Season dates must be valid MM-DD values", 400);
+  }
 
   try {
     const green = await prisma.green.create({
