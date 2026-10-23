@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
+import { logAudit } from "@/lib/audit";
 
 /**
  * DELETE /api/groups/[id]/members/[membershipId] — remove a member from a group.
@@ -32,5 +33,13 @@ export async function DELETE(
   }
 
   await prisma.groupMember.delete({ where: { id: gm.id } });
+  logAudit({
+    session,
+    action: "group.member.removed",
+    entity: "PermissionGroup",
+    entityId: id,
+    tenantId,
+    meta: { membershipId },
+  });
   return NextResponse.json({ ok: true });
 }

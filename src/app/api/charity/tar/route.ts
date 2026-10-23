@@ -6,6 +6,7 @@ import {
 } from "@/lib/api-utils";
 import { assertPermissionOrFail, Permission } from "@/lib/permissions";
 import { resolveTenantId } from "@/lib/tenant";
+import { logAudit } from "@/lib/audit";
 import { checkCharityGate } from "@/lib/charity/feature-gate";
 import { charityGateError } from "@/lib/charity/api-helpers";
 import { getTARSections } from "@/lib/charity/tar-sections";
@@ -132,6 +133,15 @@ export async function PATCH(req: NextRequest) {
   const updated = await prisma.charityTAR.update({
     where: { id: tar.id },
     data: { sections: JSON.stringify(existing) },
+  });
+
+  logAudit({
+    session,
+    action: "charity.tar.section.saved",
+    entity: "CharityTAR",
+    entityId: tar.id,
+    tenantId,
+    meta: { yearId, slug, source: sectionSource },
   });
 
   return NextResponse.json({

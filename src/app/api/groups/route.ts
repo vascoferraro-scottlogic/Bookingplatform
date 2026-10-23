@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
+import { logAudit } from "@/lib/audit";
 import type { Permission } from "@prisma/client";
 
 /**
@@ -65,6 +66,15 @@ export async function POST(req: Request) {
         : undefined,
     },
     include: { _count: { select: { grants: true, members: true } } },
+  });
+
+  logAudit({
+    session,
+    action: "group.created",
+    entity: "PermissionGroup",
+    entityId: group.id,
+    tenantId,
+    meta: { name, permissions },
   });
 
   return NextResponse.json(group, { status: 201 });

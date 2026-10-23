@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, jsonError } from "@/lib/api-utils";
 import { assertPermissionOrFail, Permission } from "@/lib/permissions";
 import { resolveTenantId } from "@/lib/tenant";
+import { logAudit } from "@/lib/audit";
 import { checkCharityGate } from "@/lib/charity/feature-gate";
 import { charityGateError } from "@/lib/charity/api-helpers";
 
@@ -32,5 +33,13 @@ export async function DELETE(
   }
 
   await prisma.charityAssetLiability.delete({ where: { id } });
+  logAudit({
+    session,
+    action: "charity.assetLiability.deleted",
+    entity: "CharityAssetLiability",
+    entityId: id,
+    tenantId,
+    meta: { kind: row.kind, name: row.name, amount: row.amount, financialYearId: row.financialYearId },
+  });
   return NextResponse.json({ deleted: true });
 }

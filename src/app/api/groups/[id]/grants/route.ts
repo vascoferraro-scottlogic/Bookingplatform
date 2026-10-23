@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
+import { logAudit } from "@/lib/audit";
 import type { Permission } from "@prisma/client";
 
 /**
@@ -34,6 +35,15 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       prisma.permissionGrant.create({ data: { groupId: id, permission: p } }),
     ),
   ]);
+
+  logAudit({
+    session,
+    action: "group.grants.replaced",
+    entity: "PermissionGroup",
+    entityId: id,
+    tenantId,
+    meta: { permissions },
+  });
 
   const updated = await prisma.permissionGroup.findUnique({
     where: { id },

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
+import { logAudit } from "@/lib/audit";
 
 /**
  * GET /api/groups/[id] — get a single group with grants + members.
@@ -78,6 +79,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     data,
   });
 
+  logAudit({
+    session,
+    action: "group.updated",
+    entity: "PermissionGroup",
+    entityId: id,
+    tenantId,
+    meta: { before: { name: group.name, description: group.description }, after: data },
+  });
+
   return NextResponse.json(updated);
 }
 
@@ -103,5 +113,13 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   }
 
   await prisma.permissionGroup.delete({ where: { id } });
+  logAudit({
+    session,
+    action: "group.deleted",
+    entity: "PermissionGroup",
+    entityId: id,
+    tenantId,
+    meta: { name: group.name },
+  });
   return NextResponse.json({ ok: true });
 }

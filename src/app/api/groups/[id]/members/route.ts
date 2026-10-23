@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
+import { logAudit } from "@/lib/audit";
 
 /**
  * POST /api/groups/[id]/members — add a member to a group.
@@ -50,6 +51,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         include: { user: { select: { id: true, name: true, email: true } } },
       },
     },
+  });
+
+  logAudit({
+    session,
+    action: "group.member.added",
+    entity: "PermissionGroup",
+    entityId: id,
+    tenantId,
+    meta: { membershipId },
   });
 
   return NextResponse.json(member, { status: 201 });
