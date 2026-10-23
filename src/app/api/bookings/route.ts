@@ -6,7 +6,7 @@ import { logAudit } from "@/lib/audit";
 import { isGreenOpenOn, type GreenSeasonInfo } from "@/lib/season";
 import { hasPermission, assertPermissionOrFail, Permission } from "@/lib/permissions";
 import { isFeatureEnabled, moduleFlagOrFail } from "@/lib/features";
-import { createNotification, type NotificationType } from "@/lib/notifications";
+import { createNotification } from "@/lib/notifications";
 import {
   DEFAULT_CLOSING_TIME,
   DEFAULT_OPENING_TIME,
@@ -360,7 +360,7 @@ export async function POST(req: NextRequest) {
     await createNotification({
       tenantId: bookingTenantId,
       userId: d.userId,
-      type: "BOOKING_OVERRIDE" as NotificationType,
+      type: "BOOKING_OVERRIDE",
       title: "Booking overridden",
       body: `A club administrator has overridden your booking for ${date} at ${d.slot}. Reason: ${overrideReason!.trim().slice(0, 500)}`,
     });
