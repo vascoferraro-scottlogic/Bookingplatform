@@ -1,6 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import { generateTimeSlots } from "@/lib/time-slots";
 
 type RinkData = {
   id: string;
@@ -25,18 +26,6 @@ type Config = {
   openingTime: string;
   closingTime: string;
 };
-
-function generateTimeSlots(open: string, close: string): string[] {
-  const slots: string[] = [];
-  const [oh] = open.split(":").map(Number);
-  const [ch] = close.split(":").map(Number);
-  let h = oh;
-  while (h < ch) {
-    slots.push(`${String(h).padStart(2, "0")}:00`);
-    h += 1;
-  }
-  return slots;
-}
 
 export default function AvailabilityGrid({
   greens,

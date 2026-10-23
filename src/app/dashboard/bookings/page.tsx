@@ -8,6 +8,7 @@ import WeatherCard from "@/components/booking/WeatherCard";
 import { useTrack } from "@/components/TrackingProvider";
 import { getClientEffectiveRole } from "@/lib/effective-role-client";
 import { useTranslations } from "next-intl";
+import { generateTimeSlots } from "@/lib/time-slots";
 
 type Tenant = { id: string; name: string; slug: string };
 
@@ -115,18 +116,6 @@ export default function BookingsPage() {
     }
     loadData(selectedTenant || undefined);
   }, [selectedTenant, isPlatformAdmin, date]);
-
-  function generateTimeSlots(open: string, close: string): string[] {
-    const slots: string[] = [];
-    const [oh, om] = open.split(":").map(Number);
-    const [ch, cm] = close.split(":").map(Number);
-    let h = oh, m = om;
-    while (h < ch || (h === ch && m < cm)) {
-      slots.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
-      h += 1;
-    }
-    return slots;
-  }
 
   const timeSlots = tenantConfig
     ? generateTimeSlots(tenantConfig.openingTime, tenantConfig.closingTime)
