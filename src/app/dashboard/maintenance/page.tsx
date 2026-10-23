@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useTrack } from "@/components/TrackingProvider";
 import { useTranslations, useLocale } from "next-intl";
 import { formatDateTime } from "@/lib/format";
+import { getClientEffectiveRole } from "@/lib/effective-role-client";
 
 type Tenant = { id: string; name: string; slug: string };
 
@@ -54,18 +55,21 @@ export default function MaintenancePage() {
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const { data: session } = useSession();
-  const [canSubmit, setCanSubmit] = useState(false);
+  const [hasCreatePermission, setHasCreatePermission] = useState(false);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [effectiveUserId, setEffectiveUserId] = useState<string | null>(null);
   const [assignees, setAssignees] = useState<{ id: string; name: string }[]>([]);
   const [assigneeChoice, setAssigneeChoice] = useState<Record<string, string>>({});
+  // The API gate is role OR permission: MAINTENANCE / TENANT_ADMIN roles can always submit.
+  const effRole = getClientEffectiveRole(session).role;
+  const canSubmit = hasCreatePermission || effRole === "MAINTENANCE" || effRole === "TENANT_ADMIN";
   const { trackFeature } = useTrack();
   const t = useTranslations("maintenance");
   const tMaint = t; // the task list below shadows `t` with each task
 
   useEffect(() => {
     let mounted = true;
-    setCanSubmit(false);
+    setHasCreatePermission(false);
     setPermissions([]);
     setEffectiveUserId(null);
     if (!session) return () => { mounted = false; };
@@ -75,10 +79,10 @@ export default function MaintenancePage() {
         if (!mounted || !data) return;
         const perms: string[] = data.permissions ?? [];
         setPermissions(perms);
-        setCanSubmit(perms.includes("maintenance_create"));
+        setHasCreatePermission(perms.includes("maintenance_create"));
         setEffectiveUserId(data.effectiveUserId ?? null);
       })
-      .catch(() => { if (mounted) { setCanSubmit(false); setPermissions([]); setEffectiveUserId(null); } });
+      .catch(() => { if (mounted) { setHasCreatePermission(false); setPermissions([]); setEffectiveUserId(null); } });
     return () => { mounted = false; };
   }, [session]);
 
