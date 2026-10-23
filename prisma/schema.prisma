@@ -30,6 +30,8 @@ model Tenant {
   locality                  String?
   country                   Country                  @default(OTHER)
   vertical                  Vertical                 @default(BOWLS)
+  bookingFeePence           Int                      @default(1000)
+  timezone                  String                   @default("Europe/London")
   agentMetrics              AgentConfidenceMetrics[]
   agentConfigs              AgentConfig[]
   agentDecisions            AgentDecision[]
@@ -156,6 +158,7 @@ model Green {
   allWeather         Boolean              @default(false)
   seasonStartMMDD    String?
   seasonEndMMDD      String?
+  archivedAt         DateTime?
   tenant             Tenant               @relation(fields: [tenantId], references: [id])
   seasons            GreenSeason[]
   maintenanceHistory MaintenanceHistory[] @relation("GreenHistory")
@@ -180,6 +183,7 @@ model Rink {
   id             String          @id @default(cuid())
   name           String
   greenId        String
+  archivedAt     DateTime?
   bookingSlots   BookingSlot[]
   green          Green           @relation(fields: [greenId], references: [id])
   streamSessions StreamSession[]
@@ -307,6 +311,7 @@ model WaitlistEntry {
   createdAt DateTime @default(now())
   booking   Booking  @relation(fields: [bookingId], references: [id])
 
+  @@unique([bookingId, userId])
   @@index([bookingId, createdAt])
 }
 
@@ -957,6 +962,14 @@ model Membership {
   @@index([userId, status])
 }
 
+/// Payment-provider webhook events already handled, for replay protection.
+model ProcessedWebhookEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  source      String
+  processedAt DateTime @default(now())
+}
+
 model TenantApplication {
   id            String            @id @default(cuid())
   clubName      String
@@ -966,6 +979,7 @@ model TenantApplication {
   country       String
   region        String?
   notes         String?
+  vertical      Vertical          @default(BOWLS)
   status        ApplicationStatus @default(PENDING)
   decisionNotes String?
   reviewedAt    DateTime?
@@ -1434,6 +1448,7 @@ enum PaymentStatus {
   PAID
   FAILED
   REFUNDED
+  REFUND_FAILED
 }
 
 enum PaymentType {
