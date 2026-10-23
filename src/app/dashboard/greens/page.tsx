@@ -152,11 +152,16 @@ export default function GreensPage() {
   async function handleAddSeason(greenId: string) {
     if (!seasonStart || !seasonEnd) { flash("Start and end dates required", true); return; }
     const qs = selectedTenant ? `?tenantId=${encodeURIComponent(selectedTenant)}` : "";
-    const res = await fetch(`/api/admin/greens/${greenId}/seasons${qs}`, {
+    const post = (overwrite: boolean) => fetch(`/api/admin/greens/${greenId}/seasons${qs}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ year: seasonYear, startDate: seasonStart, endDate: seasonEnd, note: seasonNote || null }),
+      body: JSON.stringify({ year: seasonYear, startDate: seasonStart, endDate: seasonEnd, note: seasonNote || null, ...(overwrite ? { overwrite: true } : {}) }),
     });
+    let res = await post(false);
+    if (res.status === 409) {
+      if (!window.confirm(`A ${seasonYear} season override already exists. Overwrite it?`)) return;
+      res = await post(true);
+    }
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       flash(d.error ?? "Failed to add season override", true);
