@@ -1,15 +1,10 @@
-import { prisma } from "@/lib/prisma";
-import { setFeatureFlag } from "@/lib/features";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { jsonRequest, readJson, request, routeParams } from "@/test-utils/http";
+import { hoursFromNow } from "@/test-utils/dates";
 
 import { GET, POST } from "@/app/api/federations/route";
 import { GET as GET_ONE } from "@/app/api/federations/[id]/route";
@@ -20,128 +15,116 @@ import { POST as LEAVE } from "@/app/api/federations/[id]/leave/route";
 import { GET as ADMIN_LIST } from "@/app/api/admin/federations/route";
 import { PATCH as ADMIN_PATCH } from "@/app/api/admin/federations/[id]/route";
 
-let tenantId1: string;
-let tenantId2: string;
-let adminId1: string;
-let adminId2: string;
-let slug1: string;
-let slug2: string;
-let federationId: string;
-let inviteToken: string;
+const T1 = "club-1";
+const T2 = "club-2";
+const SLUG2 = "fed-club-2";
+const FED = "fed-alpha";
+const TOKEN = "invite-token";
+const ADMIN1 = { id: "admin-1", role: "TENANT_ADMIN" as const, tenantId: T1 };
+const ADMIN2 = { id: "admin-2", role: "TENANT_ADMIN" as const, tenantId: T2 };
+const USER1 = { id: "user-1", role: "USER" as const, tenantId: T1 };
+const PLATFORM_ADMIN = { id: "pa-1", role: "PLATFORM_ADMIN" as const, tenantId: null };
 
-function adminSession(id: string, tenantId: string) {
-  return {
-    session: {
-      user: { id, email: `fed-admin-${id}@test.com`, name: "Admin", role: "TENANT_ADMIN", tenantId },
-    },
-  };
+const idParams = (id: string) => routeParams({ id });
+const tokenParams = (token: string) => routeParams({ token });
+const post = (body?: unknown) => jsonRequest("POST", "/api/federations", body);
+
+const federationRow = { id: FED, name: "Test Fed Alpha", status: "ACTIVE", maxClubs: 10 };
+
+/** T1 is an active member of FED; T2 is not. */
+function t1IsOnlyMember() {
+  prismaMock.federationMembership.findFirst.mockImplementation((async (args: any) =>
+    args.where.federationId === FED && args.where.tenantId === T1 && args.where.leftAt === null
+      ? { id: "fm-1", federationId: FED, tenantId: T1 }
+      : null) as never);
 }
 
-function userSession(tenantId: string) {
-  return {
-    session: {
-      user: { id: "u-fed-nope", email: "fed-user@test.com", name: "User", role: "USER", tenantId },
-    },
-  };
+/** A pending invite from T1 to T2 that expires in two weeks. */
+function pendingInvite(overrides: Record<string, unknown> = {}) {
+  prismaMock.federationInvite.findUnique.mockResolvedValue({
+    id: "inv-1",
+    token: TOKEN,
+    federationId: FED,
+    inviterTenantId: T1,
+    inviteeTenantId: T2,
+    status: "PENDING",
+    expiresAt: hoursFromNow(14 * 24),
+    federation: federationRow,
+    ...overrides,
+  } as never);
 }
 
-function platformAdminSession() {
-  return {
-    session: {
-      user: { id: "pa-fed", email: "pa@test.com", name: "PA", role: "PLATFORM_ADMIN" },
-    },
-  };
-}
-
-function idParams(id: string) {
-  return { params: Promise.resolve({ id }) };
-}
-
-function tokenParams(token: string) {
-  return { params: Promise.resolve({ token }) };
-}
-
-beforeAll(async () => {
-  slug1 = `fed-club1-${Date.now()}`;
-  slug2 = `fed-club2-${Date.now()}`;
-
-  const t1 = await prisma.tenant.create({ data: { name: "Fed Club 1", slug: slug1 } });
-  const t2 = await prisma.tenant.create({ data: { name: "Fed Club 2", slug: slug2 } });
-  tenantId1 = t1.id;
-  tenantId2 = t2.id;
-
-  const a1 = await prisma.user.create({
-    data: { email: `fed-a1-${Date.now()}@test.com`, name: "Admin1", passwordHash: "x", role: "TENANT_ADMIN", tenantId: tenantId1 },
-  });
-  const a2 = await prisma.user.create({
-    data: { email: `fed-a2-${Date.now()}@test.com`, name: "Admin2", passwordHash: "x", role: "TENANT_ADMIN", tenantId: tenantId2 },
-  });
-  adminId1 = a1.id;
-  adminId2 = a2.id;
-
-  await setFeatureFlag(tenantId1, "federation", true);
-  await setFeatureFlag(tenantId2, "federation", true);
-});
-
-afterAll(async () => {
-  await prisma.federationInvite.deleteMany({ where: { federation: { name: { startsWith: "Test Fed" } } } });
-  await prisma.federationMembership.deleteMany({ where: { federation: { name: { startsWith: "Test Fed" } } } });
-  await prisma.federation.deleteMany({ where: { name: { startsWith: "Test Fed" } } });
-  await prisma.featureFlag.deleteMany({ where: { tenantId: { in: [tenantId1, tenantId2] } } });
-  await prisma.user.deleteMany({ where: { id: { in: [adminId1, adminId2] } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: [tenantId1, tenantId2] } } });
+beforeEach(() => {
+  // Federation feature is on for every club unless a test turns it off.
+  prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: true } as never);
 });
 
 // ── Create federation ──────────────────────────────────────
 
 describe("POST /api/federations — create", () => {
+  beforeEach(() => {
+    prismaMock.federation.findUnique.mockResolvedValue(null);
+    prismaMock.federationMembership.count.mockResolvedValue(0);
+    prismaMock.federation.create.mockImplementation((async ({ data }: any) => ({
+      id: FED,
+      name: data.name,
+      description: data.description,
+      createdByTenantId: data.createdByTenantId,
+      _count: { memberships: 1 },
+    })) as never);
+  });
+
   test("TENANT_ADMIN can create a federation", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const req = new Request("http://localhost/api/federations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Test Fed Alpha", description: "For testing" }),
-    });
-    const res = await POST(req);
-    expect(res.status).toBe(201);
-    const body = await res.json();
+    signInAs(ADMIN1);
+
+    const { status, body } = await readJson(await POST(post({ name: "Test Fed Alpha", description: "For testing" })));
+
+    expect(status).toBe(201);
     expect(body.name).toBe("Test Fed Alpha");
-    federationId = body.id;
+    // The creating club becomes the first member.
+    expect(prismaMock.federation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          name: "Test Fed Alpha",
+          description: "For testing",
+          createdByTenantId: T1,
+          memberships: { create: { tenantId: T1, billingMode: "HOST_CLUB_RATE" } },
+        },
+      }),
+    );
   });
 
   test("USER gets 403", async () => {
-    mockSessionReturn = userSession(tenantId1);
-    const req = new Request("http://localhost/api/federations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Test Fed Nope" }),
-    });
-    const res = await POST(req);
-    expect(res.status).toBe(403);
+    signInAs(USER1);
+
+    const { status } = await readJson(await POST(post({ name: "Test Fed Nope" })));
+
+    expect(status).toBe(403);
+    expect(prismaMock.federation.create).not.toHaveBeenCalled();
   });
 
   test("duplicate name returns 409", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const req = new Request("http://localhost/api/federations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Test Fed Alpha" }),
-    });
-    const res = await POST(req);
-    expect(res.status).toBe(409);
+    signInAs(ADMIN1);
+    prismaMock.federation.findUnique.mockResolvedValue(federationRow as never);
+
+    const { status } = await readJson(await POST(post({ name: "Test Fed Alpha" })));
+
+    expect(status).toBe(409);
+    expect(prismaMock.federation.findUnique).toHaveBeenCalledWith({ where: { name: "Test Fed Alpha" } });
+    expect(prismaMock.federation.create).not.toHaveBeenCalled();
   });
 
   test("federation feature disabled returns 403", async () => {
-    await setFeatureFlag(tenantId1, "federation", false);
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const req = new Request("http://localhost/api/federations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Test Fed Blocked" }),
+    signInAs(ADMIN1);
+    prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: false } as never);
+
+    const { status } = await readJson(await POST(post({ name: "Test Fed Blocked" })));
+
+    expect(status).toBe(403);
+    expect(prismaMock.featureFlag.findUnique).toHaveBeenCalledWith({
+      where: { tenantId_key: { tenantId: T1, key: "federation" } },
     });
-    const res = await POST(req);
-    expect(res.status).toBe(403);
-    await setFeatureFlag(tenantId1, "federation", true);
+    expect(prismaMock.federation.create).not.toHaveBeenCalled();
   });
 });
 
@@ -149,97 +132,161 @@ describe("POST /api/federations — create", () => {
 
 describe("GET /api/federations — list", () => {
   test("returns club's federations", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const res = await GET();
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.length).toBeGreaterThanOrEqual(1);
-    expect(body[0].name).toBe("Test Fed Alpha");
+    signInAs(ADMIN1);
+    prismaMock.federationMembership.findMany.mockResolvedValue([
+      { billingMode: "HOST_CLUB_RATE", federation: { ...federationRow, _count: { memberships: 1 } } },
+    ] as never);
+
+    const { status, body } = await readJson(await GET());
+
+    expect(status).toBe(200);
+    expect(body).toHaveLength(1);
+    expect(body[0]).toEqual(expect.objectContaining({ name: "Test Fed Alpha", billingMode: "HOST_CLUB_RATE", memberCount: 1 }));
+    expect(prismaMock.federationMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: T1, leftAt: null } }),
+    );
   });
 
   test("club not in federation gets empty list", async () => {
-    mockSessionReturn = adminSession(adminId2, tenantId2);
-    const res = await GET();
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.length).toBe(0);
+    signInAs(ADMIN2);
+    prismaMock.federationMembership.findMany.mockResolvedValue([] as never);
+
+    const { status, body } = await readJson(await GET());
+
+    expect(status).toBe(200);
+    expect(body).toEqual([]);
+    expect(prismaMock.federationMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: T2, leftAt: null } }),
+    );
   });
 });
 
 // ── Federation detail ──────────────────────────────────────
 
 describe("GET /api/federations/[id] — detail", () => {
-  test("member sees federation detail", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const res = await GET_ONE(new Request("http://localhost"), idParams(federationId));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+  test("member sees federation detail with active members only", async () => {
+    signInAs(ADMIN1);
+    t1IsOnlyMember();
+    prismaMock.federation.findUnique.mockResolvedValue({
+      ...federationRow,
+      memberships: [{ tenantId: T1 }],
+      invites: [],
+    } as never);
+
+    const { status, body } = await readJson(await GET_ONE(request("/"), idParams(FED)));
+
+    expect(status).toBe(200);
     expect(body.name).toBe("Test Fed Alpha");
-    expect(body.memberships.length).toBe(1);
+    expect(body.memberships).toHaveLength(1);
+    expect(prismaMock.federation.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: FED },
+        include: expect.objectContaining({ memberships: expect.objectContaining({ where: { leftAt: null } }) }),
+      }),
+    );
   });
 
   test("non-member gets 404", async () => {
-    mockSessionReturn = adminSession(adminId2, tenantId2);
-    const res = await GET_ONE(new Request("http://localhost"), idParams(federationId));
-    expect(res.status).toBe(404);
+    signInAs(ADMIN2);
+    t1IsOnlyMember();
+
+    const { status } = await readJson(await GET_ONE(request("/"), idParams(FED)));
+
+    expect(status).toBe(404);
+    expect(prismaMock.federationMembership.findFirst).toHaveBeenCalledWith({
+      where: { federationId: FED, tenantId: T2, leftAt: null },
+    });
+    expect(prismaMock.federation.findUnique).not.toHaveBeenCalled();
   });
 });
 
 // ── Invite + accept lifecycle ──────────────────────────────
 
 describe("Federation invite lifecycle", () => {
-  test("member can invite another club", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const req = new Request("http://localhost/api/federations/" + federationId + "/invite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenantSlug: slug2 }),
+  describe("POST /api/federations/[id]/invite", () => {
+    beforeEach(() => {
+      t1IsOnlyMember();
+      prismaMock.federation.findUnique.mockResolvedValue(federationRow as never);
+      prismaMock.federationInvite.count.mockResolvedValue(0);
+      prismaMock.tenant.findUnique.mockImplementation((async (args: any) =>
+        args.where.slug === SLUG2 ? { id: T2, slug: SLUG2, name: "Fed Club 2" } : null) as never);
+      prismaMock.federationInvite.findFirst.mockResolvedValue(null);
+      prismaMock.federationMembership.count.mockResolvedValue(1);
+      prismaMock.federationInvite.create.mockImplementation((async ({ data }: any) => ({
+        id: "inv-1",
+        token: TOKEN,
+        ...data,
+        inviteeTenant: { id: T2, name: "Fed Club 2", slug: SLUG2, locality: null },
+      })) as never);
     });
-    const res = await INVITE(req, idParams(federationId));
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.inviteeTenant.slug).toBe(slug2);
-    inviteToken = body.token;
-  });
 
-  test("cannot invite same club twice", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const req = new Request("http://localhost", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenantSlug: slug2 }),
+    test("member can invite another club", async () => {
+      signInAs(ADMIN1);
+
+      const { status, body } = await readJson(await INVITE(post({ tenantSlug: SLUG2 }), idParams(FED)));
+
+      expect(status).toBe(201);
+      expect(body.inviteeTenant.slug).toBe(SLUG2);
+      expect(body.token).toBe(TOKEN);
+      expect(prismaMock.federationInvite.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ federationId: FED, inviterTenantId: T1, inviteeTenantId: T2 }),
+        }),
+      );
     });
-    const res = await INVITE(req, idParams(federationId));
-    expect(res.status).toBe(409);
+
+    test("cannot invite same club twice", async () => {
+      signInAs(ADMIN1);
+      prismaMock.federationInvite.findFirst.mockResolvedValue({ id: "inv-1", status: "PENDING" } as never);
+
+      const { status } = await readJson(await INVITE(post({ tenantSlug: SLUG2 }), idParams(FED)));
+
+      expect(status).toBe(409);
+      expect(prismaMock.federationInvite.findFirst).toHaveBeenCalledWith({
+        where: { federationId: FED, inviteeTenantId: T2, status: "PENDING" },
+      });
+      expect(prismaMock.federationInvite.create).not.toHaveBeenCalled();
+    });
   });
 
   test("invited club can fetch invite", async () => {
-    mockSessionReturn = adminSession(adminId2, tenantId2);
-    const res = await GET_INVITE(new Request("http://localhost"), tokenParams(inviteToken));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    signInAs(ADMIN2);
+    pendingInvite();
+
+    const { status, body } = await readJson(await GET_INVITE(request("/"), tokenParams(TOKEN)));
+
+    expect(status).toBe(200);
     expect(body.federation.name).toBe("Test Fed Alpha");
+    expect(prismaMock.federationInvite.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { token: TOKEN } }));
   });
 
   test("invited club can accept", async () => {
-    mockSessionReturn = adminSession(adminId2, tenantId2);
-    const res = await ACCEPT(new Request("http://localhost", { method: "POST" }), tokenParams(inviteToken));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    signInAs(ADMIN2);
+    pendingInvite();
+    prismaMock.federationMembership.count.mockResolvedValue(1);
+
+    const { status, body } = await readJson(await ACCEPT(request("/", { method: "POST" }), tokenParams(TOKEN)));
+
+    expect(status).toBe(200);
     expect(body.ok).toBe(true);
+    // Accepting adds T2 as a member and marks the invite accepted.
+    expect(prismaMock.federationMembership.create).toHaveBeenCalledWith({
+      data: { federationId: FED, tenantId: T2, billingMode: "HOST_CLUB_RATE" },
+    });
+    expect(prismaMock.federationInvite.update).toHaveBeenCalledWith({
+      where: { id: "inv-1" },
+      data: { status: "ACCEPTED" },
+    });
   });
 
   test("accepting again returns 400", async () => {
-    mockSessionReturn = adminSession(adminId2, tenantId2);
-    const res = await ACCEPT(new Request("http://localhost", { method: "POST" }), tokenParams(inviteToken));
-    expect(res.status).toBe(400);
-  });
+    signInAs(ADMIN2);
+    pendingInvite({ status: "ACCEPTED" });
 
-  test("federation now has 2 members", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const res = await GET_ONE(new Request("http://localhost"), idParams(federationId));
-    const body = await res.json();
-    expect(body.memberships.length).toBe(2);
+    const { status } = await readJson(await ACCEPT(request("/", { method: "POST" }), tokenParams(TOKEN)));
+
+    expect(status).toBe(400);
+    expect(prismaMock.federationMembership.create).not.toHaveBeenCalled();
   });
 });
 
@@ -247,32 +294,43 @@ describe("Federation invite lifecycle", () => {
 
 describe("POST /api/federations/invite/[token]/decline", () => {
   test("cannot decline an already-accepted invite", async () => {
-    mockSessionReturn = adminSession(adminId2, tenantId2);
-    const res = await DECLINE(new Request("http://localhost", { method: "POST" }), tokenParams(inviteToken));
-    expect(res.status).toBe(400);
+    signInAs(ADMIN2);
+    pendingInvite({ status: "ACCEPTED" });
+
+    const { status } = await readJson(await DECLINE(request("/", { method: "POST" }), tokenParams(TOKEN)));
+
+    expect(status).toBe(400);
+    expect(prismaMock.federationInvite.update).not.toHaveBeenCalled();
   });
 });
 
 // ── Leave ──────────────────────────────────────────────
 
 describe("POST /api/federations/[id]/leave", () => {
-  test("member can leave a federation", async () => {
-    mockSessionReturn = adminSession(adminId2, tenantId2);
-    const res = await LEAVE(new Request("http://localhost", { method: "POST" }), idParams(federationId));
-    expect(res.status).toBe(200);
+  test("member can leave a federation (soft leave: sets leftAt)", async () => {
+    signInAs(ADMIN1);
+    t1IsOnlyMember();
+
+    const { status } = await readJson(await LEAVE(request("/", { method: "POST" }), idParams(FED)));
+
+    expect(status).toBe(200);
+    expect(prismaMock.federationMembership.update).toHaveBeenCalledWith({
+      where: { id: "fm-1" },
+      data: { leftAt: expect.any(Date) },
+    });
   });
 
-  test("leaving again returns 404", async () => {
-    mockSessionReturn = adminSession(adminId2, tenantId2);
-    const res = await LEAVE(new Request("http://localhost", { method: "POST" }), idParams(federationId));
-    expect(res.status).toBe(404);
-  });
+  test("leaving when not an active member returns 404", async () => {
+    signInAs(ADMIN2);
+    t1IsOnlyMember();
 
-  test("federation now has 1 member", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const res = await GET_ONE(new Request("http://localhost"), idParams(federationId));
-    const body = await res.json();
-    expect(body.memberships.length).toBe(1);
+    const { status } = await readJson(await LEAVE(request("/", { method: "POST" }), idParams(FED)));
+
+    expect(status).toBe(404);
+    expect(prismaMock.federationMembership.findFirst).toHaveBeenCalledWith({
+      where: { federationId: FED, tenantId: T2, leftAt: null },
+    });
+    expect(prismaMock.federationMembership.update).not.toHaveBeenCalled();
   });
 });
 
@@ -280,29 +338,35 @@ describe("POST /api/federations/[id]/leave", () => {
 
 describe("Platform admin federation routes", () => {
   test("GET /api/admin/federations lists all", async () => {
-    mockSessionReturn = platformAdminSession();
-    const res = await ADMIN_LIST();
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.some((f: any) => f.name === "Test Fed Alpha")).toBe(true);
+    signInAs(PLATFORM_ADMIN);
+    prismaMock.federation.findMany.mockResolvedValue([{ ...federationRow, _count: { memberships: 2 } }] as never);
+
+    const { status, body } = await readJson(await ADMIN_LIST());
+
+    expect(status).toBe(200);
+    expect(body).toEqual([expect.objectContaining({ name: "Test Fed Alpha", memberCount: 2 })]);
   });
 
   test("PATCH /api/admin/federations/[id] suspends", async () => {
-    mockSessionReturn = platformAdminSession();
-    const req = new Request("http://localhost", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "SUSPENDED" }),
-    });
-    const res = await ADMIN_PATCH(req, idParams(federationId));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    signInAs(PLATFORM_ADMIN);
+    prismaMock.federation.findUnique.mockResolvedValue(federationRow as never);
+    prismaMock.federation.update.mockImplementation((async ({ data }: any) => ({ ...federationRow, ...data })) as never);
+
+    const { status, body } = await readJson(
+      await ADMIN_PATCH(jsonRequest("PATCH", "/", { status: "SUSPENDED" }), idParams(FED)),
+    );
+
+    expect(status).toBe(200);
     expect(body.status).toBe("SUSPENDED");
+    expect(prismaMock.federation.update).toHaveBeenCalledWith({ where: { id: FED }, data: { status: "SUSPENDED" } });
   });
 
   test("TENANT_ADMIN gets 403 on admin route", async () => {
-    mockSessionReturn = adminSession(adminId1, tenantId1);
-    const res = await ADMIN_LIST();
-    expect(res.status).toBe(403);
+    signInAs(ADMIN1);
+
+    const { status } = await readJson(await ADMIN_LIST());
+
+    expect(status).toBe(403);
+    expect(prismaMock.federation.findMany).not.toHaveBeenCalled();
   });
 });

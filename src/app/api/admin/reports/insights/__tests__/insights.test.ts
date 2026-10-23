@@ -1,15 +1,5 @@
-import { prisma } from "@/lib/prisma";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
 jest.mock("@/lib/billing", () => ({
   getRevenueReport: jest.fn(() =>
@@ -21,333 +11,349 @@ jest.mock("@/lib/billing", () => ({
       activeTenants: 3,
       arpt: 16667,
       byPlan: [{ planId: "p1", planName: "Pro", tenants: 3, mrr: 50000 }],
-      byMonth: [{ month: "2026-04", revenue: 50000 }],
+      byMonth: [{ month: "m1", revenue: 50000 }],
     }),
   ),
   getChurnReport: jest.fn(() =>
     Promise.resolve({
       totalChurned: 1,
       churnRate: 5,
-      byMonth: [{ month: "2026-04", count: 1 }],
+      byMonth: [{ month: "m1", count: 1 }],
       churned: [],
     }),
   ),
 }));
 
+// The raw counts (tenants, bookings, runs, …) come from Prisma count/groupBy
+// and SQL and are only passed through, so these tests feed fixed counts and
+// check the guards, the derived KPIs the route computes in JavaScript (rates,
+// onboarding progress, activation and review times, per-country rollups,
+// agent-name lookup, detector conversion) and the response shape.
+
+import { prismaMock } from "@/test-utils/prisma-mock";
+
+// groupBy is a heavily overloaded generic, so its deep mock is untyped; cast it.
+const groupByMock = (model: { groupBy: unknown }) => model.groupBy as unknown as jest.Mock;
+import { signInAs } from "@/test-utils/session";
+import { readJson } from "@/test-utils/http";
+import { hoursFromNow } from "@/test-utils/dates";
 import { GET } from "@/app/api/admin/reports/insights/route";
 
-const stamp = Date.now();
+const PLATFORM_ADMIN_ID = "platform-admin";
+const daysAgo = (days: number) => hoursFromNow(-24 * days);
 
-const cleanup: {
-  tenantIds: string[];
-  userIds: string[];
-  bookingIds: string[];
-  taskIds: string[];
-  eventIds: string[];
-  appIds: string[];
-} = { tenantIds: [], userIds: [], bookingIds: [], taskIds: [], eventIds: [], appIds: [] };
+const signInAsPlatformAdmin = () => signInAs({ id: PLATFORM_ADMIN_ID, role: "PLATFORM_ADMIN", tenantId: null });
 
-let tenantId: string;
-let platformAdminId: string;
-let userId: string;
-let rinkId: string;
-
-function platformSession(uid: string) {
-  return {
-    session: {
-      user: {
-        id: uid,
-        email: "platform-admin@test.com",
-        name: "Platform Admin",
-        role: "PLATFORM_ADMIN",
-        tenantId: null,
-        actingAs: null,
-      },
-    },
-  };
+/** Each count resolves to a value chosen by its `where` (default 0). */
+function countBy(model: { count: jest.Mock }, pick: (where: any) => number) {
+  model.count.mockImplementation((async (args?: any) => pick(args?.where ?? {})) as never);
 }
 
-function tenantSession(uid: string, tid: string) {
-  return {
-    session: {
-      user: {
-        id: uid,
-        email: "tenant-admin@test.com",
-        name: "Tenant Admin",
-        role: "TENANT_ADMIN",
-        tenantId: tid,
-        actingAs: null,
-      },
-    },
-  };
+/** Raw queries answered by recognising their SQL (default: no rows). */
+function givenRawRows(rows: { leaderboard?: unknown[]; revenueByCountry?: unknown[]; featureByCountry?: unknown[]; featureByTenant?: unknown[] }) {
+  prismaMock.$queryRawUnsafe.mockImplementation((async (sql: string) => {
+    if (sql.includes('FROM "Booking"')) return rows.leaderboard ?? [];
+    if (sql.includes("TenantBillingProfile")) return rows.revenueByCountry ?? [];
+    if (sql.includes("GROUP BY t.country, te.action")) return rows.featureByCountry ?? [];
+    if (sql.includes("GROUP BY t.id")) return rows.featureByTenant ?? [];
+    throw new Error(`unexpected query: ${sql}`);
+  }) as never);
 }
 
-function impersonatingSession(uid: string) {
-  return {
-    session: {
-      user: {
-        id: uid,
-        email: "platform-admin@test.com",
-        name: "Platform Admin",
-        role: "PLATFORM_ADMIN",
-        tenantId: null,
-        actingAs: { tenantId: "some-tenant", tenantName: "Fake Club" },
-      },
-    },
-  };
-}
-
-beforeAll(async () => {
-  // Create tenant
-  const t = await prisma.tenant.create({
-    data: {
-      name: `MI Test Club ${stamp}`,
-      slug: `mi-test-${stamp}`,
-      status: "ACTIVE",
-      active: true,
-      locale: "en",
-      country: "GB",
-      goLiveAt: new Date(),
-    },
-  });
-  tenantId = t.id;
-  cleanup.tenantIds.push(t.id);
-
-  const green = await prisma.green.create({
-    data: { name: "Main Green", tenantId },
-  });
-  const rink = await prisma.rink.create({
-    data: { name: "Rink 1", greenId: green.id },
-  });
-  rinkId = rink.id;
-
-  // Platform admin user (no tenantId)
-  const pa = await prisma.user.create({
-    data: {
-      email: `mi-platform-${stamp}@test.com`,
-      name: "Platform Admin",
-      passwordHash: "x",
-      role: "PLATFORM_ADMIN",
-    },
-  });
-  platformAdminId = pa.id;
-  cleanup.userIds.push(pa.id);
-
-  // Tenant user
-  const u = await prisma.user.create({
-    data: {
-      email: `mi-user-${stamp}@test.com`,
-      name: "Test User",
-      passwordHash: "x",
-      role: "USER",
-      tenantId,
-    },
-  });
-  userId = u.id;
-  cleanup.userIds.push(u.id);
-
-  // Create a booking (today)
-  const todayISO = new Date().toISOString().slice(0, 10);
-  const booking = await prisma.booking.create({
-    data: {
-      tenantId,
-      userId,
-      date: todayISO,
-      status: "CONFIRMED",
-      slots: { create: { rinkId, timeSlot: "10:00-12:00" } },
-    },
-  });
-  cleanup.bookingIds.push(booking.id);
-
-  // Create a maintenance task
-  const task = await prisma.maintenanceTask.create({
-    data: {
-      tenantId,
-      title: "Fix drainage",
-      description: "Water pooling on green 2",
-      status: "CLOSED",
-      submittedById: userId,
-    },
-  });
-  cleanup.taskIds.push(task.id);
-
-  // Create an event
-  const event = await prisma.event.create({
-    data: {
-      tenantId,
-      title: "Summer Social",
-      description: "Annual club social",
-      date: todayISO,
-      startTime: "18:00",
-      status: "PUBLISHED",
-      createdById: userId,
-    },
-  });
-  cleanup.eventIds.push(event.id);
-
-  // Create a tenant application
-  const app = await prisma.tenantApplication.create({
-    data: {
-      clubName: `App Test Club ${stamp}`,
-      contactName: "Test Applicant",
-      contactEmail: `applicant-${stamp}@test.com`,
-      country: "GB",
-      status: "APPROVED",
-      reviewedAt: new Date(),
-    },
-  });
-  cleanup.appIds.push(app.id);
-
-  // Create onboarding progress
-  await prisma.onboardingProgress.create({
-    data: { tenantId, currentChapter: 5, completedAt: new Date() },
-  });
-});
-
-afterAll(async () => {
-  // Clean up in dependency order
-  await prisma.onboardingProgress.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.tenantApplication.deleteMany({ where: { id: { in: cleanup.appIds } } });
-  await prisma.bookingSlot.deleteMany({
-    where: { booking: { id: { in: cleanup.bookingIds } } },
-  });
-  await prisma.booking.deleteMany({ where: { id: { in: cleanup.bookingIds } } });
-  await prisma.maintenanceTask.deleteMany({ where: { id: { in: cleanup.taskIds } } });
-  await prisma.event.deleteMany({ where: { id: { in: cleanup.eventIds } } });
-  await prisma.rink.deleteMany({ where: { id: rinkId } });
-  await prisma.green.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.user.deleteMany({ where: { id: { in: cleanup.userIds } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: cleanup.tenantIds } } });
-  await prisma.$disconnect();
+beforeEach(() => {
+  // Empty platform: every count 0, every list empty.
+  for (const model of ["tenant", "user", "booking", "maintenanceTask", "event", "agentRun", "agentProposal", "federation", "fundingApplication"] as const) {
+    (prismaMock[model].count as jest.Mock).mockResolvedValue(0);
+  }
+  for (const model of ["tenant", "agentRun", "fundingApplication", "trackingEvent"] as const) {
+    (prismaMock[model].groupBy as jest.Mock).mockResolvedValue([]);
+  }
+  prismaMock.onboardingProgress.findMany.mockResolvedValue([]);
+  prismaMock.tenant.findMany.mockResolvedValue([]);
+  prismaMock.tenantApplication.findMany.mockResolvedValue([]);
+  prismaMock.agentRun.aggregate.mockResolvedValue({ _sum: { costsCents: null, tokensIn: null, tokensOut: null } } as never);
+  prismaMock.agentDefinition.findUnique.mockResolvedValue(null);
+  prismaMock.agentDefinition.findMany.mockResolvedValue([]);
+  givenRawRows({});
 });
 
 describe("GET /api/admin/reports/insights", () => {
   // ── Auth ──
 
   it("rejects unauthenticated requests", async () => {
-    mockSessionReturn = { session: null, error: new Response("Unauthorized", { status: 401 }) };
     const res = await GET();
     expect(res.status).toBe(401);
   });
 
   it("rejects TENANT_ADMIN role", async () => {
-    mockSessionReturn = tenantSession(userId, tenantId);
+    signInAs({ id: "tenant-admin", role: "TENANT_ADMIN", tenantId: "tenant-1" });
     const res = await GET();
     expect(res.status).toBe(403);
+    expect(prismaMock.tenant.count).not.toHaveBeenCalled();
   });
 
   it("rejects impersonating PLATFORM_ADMIN", async () => {
-    mockSessionReturn = impersonatingSession(platformAdminId);
-    const res = await GET();
-    expect(res.status).toBe(409);
+    signInAs({
+      id: PLATFORM_ADMIN_ID,
+      role: "PLATFORM_ADMIN",
+      tenantId: null,
+      actingAs: { tenantId: "some-tenant", tenantName: "Fake Club", role: "TENANT_ADMIN", impersonationId: "imp-1", startedAt: new Date().toISOString() },
+    });
+    const { status, body } = await readJson(await GET());
+    expect(status).toBe(409);
+    expect(body.error).toBe("EXIT_IMPERSONATION_REQUIRED");
+    expect(prismaMock.tenant.count).not.toHaveBeenCalled();
   });
 
   // ── Happy path ──
 
   it("returns all 9 domains for PLATFORM_ADMIN", async () => {
-    mockSessionReturn = platformSession(platformAdminId);
-    const res = await GET();
-    expect(res.status).toBe(200);
+    signInAsPlatformAdmin();
+    const { status, body } = await readJson(await GET());
 
-    const body = await res.json();
+    expect(status).toBe(200);
     expect(body.generatedAt).toBeDefined();
     expect(body.period).toBe("30d");
-
-    // Domain 1: Adoption
-    expect(body.adoption).toBeDefined();
-    expect(body.adoption.totalTenants).toBeGreaterThanOrEqual(1);
-    expect(body.adoption.activeTenants).toBeGreaterThanOrEqual(1);
-    expect(body.adoption.totalUsers).toBeGreaterThanOrEqual(2);
-
-    // Domain 2: Revenue (mocked)
-    expect(body.revenue.mrr).toBe(50000);
-    expect(body.revenue.arr).toBe(600000);
-    expect(body.revenue.byCountry).toBeDefined();
-
-    // Domain 3: Churn (mocked)
-    expect(body.churn.totalChurned).toBe(1);
-    expect(body.churn.churnRate).toBe(5);
-
-    // Domain 4: Operations
-    expect(body.operations.bookings30d).toBeGreaterThanOrEqual(1);
-    expect(body.operations.confirmed30d).toBeGreaterThanOrEqual(1);
-    expect(body.operations.taskCompletionRate).toBeGreaterThanOrEqual(0);
-    expect(body.operations.tenantLeaderboard).toBeDefined();
-
-    // Domain 5: Agents
-    expect(body.agents).toBeDefined();
+    for (const domain of ["adoption", "revenue", "churn", "operations", "agents", "federationAndFunding", "onboardingPipeline", "language", "featureUsage"]) {
+      expect(body[domain]).toBeDefined();
+    }
     expect(body.agents.detector).toBeDefined();
-
-    // Domain 6: Federation & funding
-    expect(body.federationAndFunding).toBeDefined();
-
-    // Domain 7: Onboarding pipeline
-    expect(body.onboardingPipeline).toBeDefined();
-    expect(body.onboardingPipeline.totalApplications).toBeGreaterThanOrEqual(1);
-    expect(body.onboardingPipeline.totalActivated).toBeGreaterThanOrEqual(1);
-
-    // Domain 8: Language
-    expect(body.language).toBeDefined();
     expect(body.language.tenantsByLocale).toBeDefined();
     expect(body.language.tenantsByCountry).toBeDefined();
-
-    // Domain 9: Feature usage
-    expect(body.featureUsage).toBeDefined();
     expect(body.featureUsage.topFeatures30d).toBeDefined();
+    expect(body.operations.tenantLeaderboard).toBeDefined();
+  });
+
+  it("passes the revenue and churn reports through, plus revenue by country", async () => {
+    signInAsPlatformAdmin();
+    givenRawRows({ revenueByCountry: [{ country: "GB", tenant_count: BigInt(3), mrr_pence: BigInt(50000) }] });
+
+    const { body } = await readJson(await GET());
+
+    expect(body.revenue.mrr).toBe(50000);
+    expect(body.revenue.arr).toBe(600000);
+    expect(body.revenue.byCountry).toEqual([{ country: "GB", tenants: 3, mrrPence: 50000 }]);
+    expect(body.churn.totalChurned).toBe(1);
+    expect(body.churn.churnRate).toBe(5);
+  });
+
+  it("returns adoption counts and onboarding progress", async () => {
+    signInAsPlatformAdmin();
+    countBy(prismaMock.tenant as never, (w) => (w.status === "ACTIVE" ? 2 : w.status === "ONBOARDING" ? 2 : w.goLiveAt ? 1 : 4));
+    countBy(prismaMock.user as never, (w) => (w.createdAt ? 1 : 5));
+    prismaMock.onboardingProgress.findMany.mockResolvedValue([
+      { completedAt: daysAgo(1), currentChapter: 5 },
+      { completedAt: null, currentChapter: 2 },
+      { completedAt: null, currentChapter: 3 },
+    ] as never);
+
+    const { body } = await readJson(await GET());
+
+    expect(body.adoption).toEqual({
+      totalTenants: 4,
+      activeTenants: 2,
+      onboardingTenants: 2,
+      totalUsers: 5,
+      newUsers30d: 1,
+      tenantsGoneLive30d: 1,
+      onboardingCompleted: 1,
+      onboardingInProgress: 2,
+      avgOnboardingChapter: 2.5,
+    });
+  });
+
+  it("returns operations with derived rates and the booking leaderboard", async () => {
+    signInAsPlatformAdmin();
+    countBy(prismaMock.booking as never, (w) => (w.status === "CONFIRMED" ? 2 : w.status === "CANCELLED" ? 1 : 3));
+    countBy(prismaMock.maintenanceTask as never, (w) => (w.status === "CLOSED" ? 1 : 3));
+    countBy(prismaMock.event as never, (w) => (w.status === "PUBLISHED" ? 1 : 2));
+    givenRawRows({ leaderboard: [{ tenant_id: "t1", tenant_name: "Club One", count: BigInt(3) }] });
+
+    const { body } = await readJson(await GET());
+
+    expect(body.operations).toEqual({
+      bookings30d: 3,
+      confirmed30d: 2,
+      cancelled30d: 1,
+      confirmRate: 67,
+      cancelRate: 33,
+      tasks30d: 3,
+      tasksClosed30d: 1,
+      taskCompletionRate: 33,
+      events30d: 2,
+      eventsPublished30d: 1,
+      tenantLeaderboard: [{ tenantId: "t1", tenantName: "Club One", bookings: 3 }],
+    });
+  });
+
+  it("rates are 0 rather than NaN on an empty platform", async () => {
+    signInAsPlatformAdmin();
+    const { body } = await readJson(await GET());
+
+    expect(body.operations.confirmRate).toBe(0);
+    expect(body.operations.cancelRate).toBe(0);
+    expect(body.operations.taskCompletionRate).toBe(0);
+    expect(body.agents.successRate).toBe(0);
+    expect(body.agents.approvalRate).toBe(0);
+    expect(body.agents.detector.approvalRate).toBe(0);
+    expect(body.agents.spend30d).toBe(0);
+    expect(body.onboardingPipeline.avgActivationDays).toBeNull();
+    expect(body.onboardingPipeline.medianActivationDays).toBeNull();
+    expect(body.onboardingPipeline.avgReviewDays).toBeNull();
+  });
+
+  it("returns agent effectiveness with agent names resolved", async () => {
+    signInAsPlatformAdmin();
+    countBy(prismaMock.agentRun as never, (w) => (w.status === "COMPLETED" ? 3 : w.status === "FAILED" ? 1 : 4));
+    countBy(prismaMock.agentProposal as never, (w) => (w.status === "APPROVED" ? 1 : w.status === "REJECTED" ? 1 : 4));
+    prismaMock.agentRun.aggregate.mockResolvedValue({ _sum: { costsCents: 120, tokensIn: 1000, tokensOut: 500 } } as never);
+    groupByMock(prismaMock.agentRun).mockResolvedValue([
+      { agentId: "a1", _sum: { costsCents: 100 }, _count: 3 },
+      { agentId: "a-unknown", _sum: { costsCents: null }, _count: 1 },
+    ] as never);
+    prismaMock.agentDefinition.findMany.mockResolvedValue([{ id: "a1", name: "No-show agent" }] as never);
+
+    const { body } = await readJson(await GET());
+
+    expect(prismaMock.agentDefinition.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a1", "a-unknown"] } },
+      select: { id: true, name: true },
+    });
+    expect(body.agents).toMatchObject({
+      runs30d: 4,
+      successful30d: 3,
+      failed30d: 1,
+      successRate: 75,
+      proposals30d: 4,
+      approved30d: 1,
+      rejected30d: 1,
+      approvalRate: 25,
+      spend30d: 120,
+      tokensIn30d: 1000,
+      tokensOut30d: 500,
+      byAgent: [
+        { agentId: "a1", agentName: "No-show agent", runs: 3, spend: 100 },
+        { agentId: "a-unknown", agentName: "a-unknown", runs: 1, spend: 0 },
+      ],
+    });
+  });
+
+  it("detector conversion is counted only when a detector agent exists", async () => {
+    signInAsPlatformAdmin();
+    prismaMock.agentDefinition.findUnique.mockResolvedValue({ id: "det" } as never);
+    countBy(prismaMock.agentRun as never, (w) => (w.agentId === "det" ? 5 : 0));
+    countBy(prismaMock.agentProposal as never, (w) =>
+      w.agentId === "det" ? (w.status === "APPROVED" ? 1 : 4) : 0);
+
+    const { body } = await readJson(await GET());
+
+    expect(prismaMock.agentDefinition.findUnique).toHaveBeenCalledWith({ where: { slug: "detector" }, select: { id: true } });
+    expect(prismaMock.agentProposal.count).toHaveBeenCalledWith({
+      where: { agentId: "det", kind: "MAINTENANCE_TASK_CREATE", createdAt: { gte: expect.any(Date) } },
+    });
+    expect(body.agents.detector).toEqual({ runs30d: 5, taskProposals30d: 4, tasksApproved30d: 1, approvalRate: 25 });
+  });
+
+  it("returns federation and funding counts", async () => {
+    signInAsPlatformAdmin();
+    countBy(prismaMock.federation as never, (w) => (w.status === "ACTIVE" ? 1 : 2));
+    prismaMock.fundingApplication.count.mockResolvedValue(3 as never);
+    groupByMock(prismaMock.fundingApplication).mockResolvedValue([{ status: "SUBMITTED", _count: 3 }] as never);
+
+    const { body } = await readJson(await GET());
+
+    expect(body.federationAndFunding).toEqual({
+      totalFederations: 2,
+      activeFederations: 1,
+      totalFundingApplications: 3,
+      fundingByStatus: [{ status: "SUBMITTED", count: 3 }],
+    });
   });
 
   it("returns onboarding pipeline with activation times", async () => {
-    mockSessionReturn = platformSession(platformAdminId);
-    const res = await GET();
-    const body = await res.json();
+    signInAsPlatformAdmin();
+    // Go-live 0, 2, 10 and 20 days after creation.
+    prismaMock.tenant.findMany.mockResolvedValue([
+      { createdAt: daysAgo(1), goLiveAt: daysAgo(1), country: "GB" },
+      { createdAt: daysAgo(12), goLiveAt: daysAgo(10), country: "GB" },
+      { createdAt: daysAgo(30), goLiveAt: daysAgo(20), country: "IE" },
+      { createdAt: daysAgo(40), goLiveAt: daysAgo(20), country: "IE" },
+    ] as never);
 
-    // Our test tenant has goLiveAt = now, createdAt ≈ now, so avgActivationDays should be 0
-    expect(body.onboardingPipeline.avgActivationDays).toBeDefined();
-    expect(body.onboardingPipeline.medianActivationDays).toBeDefined();
-    expect(body.onboardingPipeline.activationByCountry).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ country: "GB" }),
-      ]),
-    );
+    const { body } = await readJson(await GET());
+
+    expect(prismaMock.tenant.findMany).toHaveBeenCalledWith({
+      where: { goLiveAt: { not: null } },
+      select: { createdAt: true, goLiveAt: true, country: true },
+    });
+    expect(body.onboardingPipeline.totalActivated).toBe(4);
+    expect(body.onboardingPipeline.avgActivationDays).toBe(8); // (0+2+10+20)/4
+    expect(body.onboardingPipeline.medianActivationDays).toBe(6); // (2+10)/2
+    expect(body.onboardingPipeline.activationByCountry).toEqual([
+      { country: "GB", count: 2, avgDays: 1 },
+      { country: "IE", count: 2, avgDays: 15 },
+    ]);
   });
 
-  it("returns language distribution", async () => {
-    mockSessionReturn = platformSession(platformAdminId);
-    const res = await GET();
-    const body = await res.json();
+  it("median activation time with an odd number of tenants is the middle value", async () => {
+    signInAsPlatformAdmin();
+    prismaMock.tenant.findMany.mockResolvedValue([
+      { createdAt: daysAgo(30), goLiveAt: daysAgo(0), country: "GB" },
+      { createdAt: daysAgo(3), goLiveAt: daysAgo(0), country: "GB" },
+      { createdAt: daysAgo(5), goLiveAt: daysAgo(0), country: "GB" },
+    ] as never);
 
-    // Our test tenant has locale "en"
-    const enLocale = body.language.tenantsByLocale.find(
-      (l: { locale: string }) => l.locale === "en",
-    );
-    expect(enLocale).toBeDefined();
-    expect(enLocale.count).toBeGreaterThanOrEqual(1);
+    const { body } = await readJson(await GET());
 
-    const gbCountry = body.language.tenantsByCountry.find(
-      (c: { country: string }) => c.country === "GB",
-    );
-    expect(gbCountry).toBeDefined();
-    expect(gbCountry.count).toBeGreaterThanOrEqual(1);
-  });
-
-  it("returns operations with at least our test data", async () => {
-    mockSessionReturn = platformSession(platformAdminId);
-    const res = await GET();
-    const body = await res.json();
-
-    expect(body.operations.bookings30d).toBeGreaterThanOrEqual(1);
-    expect(body.operations.tasks30d).toBeGreaterThanOrEqual(1);
-    expect(body.operations.tasksClosed30d).toBeGreaterThanOrEqual(1);
-    expect(body.operations.events30d).toBeGreaterThanOrEqual(1);
-    expect(body.operations.eventsPublished30d).toBeGreaterThanOrEqual(1);
+    expect(body.onboardingPipeline.medianActivationDays).toBe(5);
   });
 
   it("returns application pipeline stats", async () => {
-    mockSessionReturn = platformSession(platformAdminId);
-    const res = await GET();
-    const body = await res.json();
+    signInAsPlatformAdmin();
+    prismaMock.tenantApplication.findMany.mockResolvedValue([
+      { status: "APPROVED", createdAt: daysAgo(5), reviewedAt: daysAgo(1), tenantId: "t1" },
+      { status: "APPROVED", createdAt: daysAgo(4), reviewedAt: daysAgo(2), tenantId: "t2" },
+      { status: "PENDING", createdAt: daysAgo(1), reviewedAt: null, tenantId: null },
+    ] as never);
 
-    expect(body.onboardingPipeline.applicationsByStatus).toBeDefined();
-    expect(body.onboardingPipeline.applicationsByStatus.APPROVED).toBeGreaterThanOrEqual(1);
+    const { body } = await readJson(await GET());
+
+    expect(body.onboardingPipeline.totalApplications).toBe(3);
+    expect(body.onboardingPipeline.applicationsByStatus).toEqual({ APPROVED: 2, PENDING: 1 });
+    expect(body.onboardingPipeline.avgReviewDays).toBe(3); // (4+2)/2, unreviewed excluded
+  });
+
+  it("returns language distribution for live and onboarding tenants", async () => {
+    signInAsPlatformAdmin();
+    groupByMock(prismaMock.tenant).mockImplementation((async ({ by }: any) =>
+      by[0] === "locale" ? [{ locale: "en", _count: 2 }, { locale: "cy", _count: 1 }] : [{ country: "GB", _count: 3 }]) as never);
+
+    const { body } = await readJson(await GET());
+
+    expect(body.language.tenantsByLocale).toEqual([{ locale: "en", count: 2 }, { locale: "cy", count: 1 }]);
+    expect(body.language.tenantsByCountry).toEqual([{ country: "GB", count: 3 }]);
+    for (const [args] of groupByMock(prismaMock.tenant).mock.calls) {
+      expect((args as any).where).toEqual({ status: { in: ["ACTIVE", "ONBOARDING"] } });
+    }
+  });
+
+  it("returns feature usage overall, by country and by tenant", async () => {
+    signInAsPlatformAdmin();
+    groupByMock(prismaMock.trackingEvent).mockResolvedValue([
+      { action: "booking.create", _count: 7 },
+      { action: null, _count: 2 },
+    ] as never);
+    givenRawRows({
+      featureByCountry: [{ country: "GB", action: "booking.create", count: BigInt(7) }],
+      featureByTenant: [{ tenant_id: "t1", tenant_name: "Club One", locale: "en", country: "GB", count: BigInt(9) }],
+    });
+
+    const { body } = await readJson(await GET());
+
+    expect(body.featureUsage).toEqual({
+      topFeatures30d: [{ action: "booking.create", count: 7 }, { action: "unknown", count: 2 }],
+      byCountry: [{ country: "GB", action: "booking.create", count: 7 }],
+      byTenant: [{ tenantId: "t1", tenantName: "Club One", locale: "en", country: "GB", featureUses: 9 }],
+    });
   });
 });

@@ -10,15 +10,16 @@
  *  - Token-overlap helper + clusterImpliedPriority helper are correct.
  *  - No merge across categories or across the 30-day window.
  */
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
 
-import { prisma } from "@/lib/prisma";
 import {
   AgentProposalAudience,
-  AgentRunStatus,
+  AgentProposalStatus,
   TaskCategory,
   TaskPriority,
   TaskStatus,
 } from "@prisma/client";
+import { prismaMock } from "@/test-utils/prisma-mock";
 import { applyProposal } from "@/lib/agent/committers";
 import {
   MAINTENANCE_TASK_CREATE_KIND,
@@ -28,96 +29,45 @@ import {
 // Side-effect import: registers the committer once for the whole suite.
 import "@/lib/agent/committers/register-all";
 
-let tenantId: string;
-let approverId: string;
-let agentId: string;
-let agentSystemUserId: string;
-let runId: string;
+const tenantId = "tenant-1";
+const approverId = "approver-1";
+const agentId = "agent-1";
+const agentSystemUserId = "sys-agent";
 
-beforeAll(async () => {
-  const tenant = await prisma.tenant.create({
-    data: { name: "Committer Test Club", slug: "committer-test-" + Date.now() },
-  });
-  tenantId = tenant.id;
-
-  const approver = await prisma.user.create({
-    data: {
-      email: `cmt-approver-${Date.now()}@test.com`,
-      name: "CmtApprover",
-      passwordHash: "x",
-      role: "TENANT_ADMIN",
-      tenantId,
-    },
-  });
-  approverId = approver.id;
-
-  const sysUser = await prisma.user.create({
-    data: {
-      email: `cmt-agent-${Date.now()}@test.com`,
-      name: "Cmt Agent System",
-      passwordHash: "x",
-      role: "USER",
-    },
-  });
-  agentSystemUserId = sysUser.id;
-
-  const def = await prisma.agentDefinition.create({
-    data: {
-      slug: "cmt-test-agent-" + Date.now(),
-      name: "Committer Test Agent",
-      systemUserId: sysUser.id,
-    },
-  });
-  agentId = def.id;
+beforeEach(() => {
+  prismaMock.agentDefinition.findUnique.mockResolvedValue({ systemUserId: agentSystemUserId } as never);
+  // No open candidate tasks unless a test says otherwise.
+  prismaMock.maintenanceTask.findMany.mockResolvedValue([]);
+  prismaMock.maintenanceTask.create.mockImplementation((async ({ data }: any) => ({ id: "new-task", ...data })) as never);
+  prismaMock.agentProposal.update.mockImplementation((async ({ where, data }: any) => ({ id: where.id, ...data })) as never);
 });
 
-afterAll(async () => {
-  await new Promise((r) => setTimeout(r, 200));
-  await prisma.taskNote.deleteMany({ where: { task: { tenantId } } });
-  await prisma.maintenanceTask.deleteMany({ where: { tenantId } });
-  await prisma.agentProposal.deleteMany({ where: { agentId } });
-  await prisma.agentRun.deleteMany({ where: { agentId } });
-  await prisma.agentDefinition.deleteMany({ where: { id: agentId } });
-  await prisma.user.deleteMany({
-    where: { id: { in: [approverId, agentSystemUserId] } },
-  });
-  await prisma.tenant.delete({ where: { id: tenantId } });
-  await prisma.$disconnect();
-});
-
-beforeEach(async () => {
-  // Note: registry is populated once via top-of-file side-effect import.
-  // We do NOT call _resetCommittersForTest here — that would orphan the
-  // already-registered committer.
-  const run = await prisma.agentRun.create({
-    data: { agentId, tenantId, status: AgentRunStatus.RUNNING },
-  });
-  runId = run.id;
-});
-
-afterEach(async () => {
-  // Tear down tasks between tests so merges don't leak.
-  await prisma.taskNote.deleteMany({ where: { task: { tenantId } } });
-  await prisma.maintenanceTask.deleteMany({ where: { tenantId } });
-  await prisma.agentProposal.deleteMany({ where: { tenantId } });
-});
-
-async function emitProposal(payload: Record<string, unknown>, opts?: {
-  confidence?: number;
-}) {
-  return prisma.agentProposal.create({
-    data: {
-      agentId,
-      runId,
-      kind: MAINTENANCE_TASK_CREATE_KIND,
-      payload: JSON.stringify(payload),
-      confidence: opts?.confidence ?? 0.7,
-      reasoning: "test",
-      audienceScope: AgentProposalAudience.TENANT,
-      tenantId,
-    },
-  });
+/** A PENDING proposal that applyProposal will load. */
+function emitProposal(payload: Record<string, unknown>, opts?: { confidence?: number }) {
+  const proposal = {
+    id: "proposal-1",
+    agentId,
+    runId: "run-1",
+    kind: MAINTENANCE_TASK_CREATE_KIND,
+    payload: JSON.stringify(payload),
+    confidence: opts?.confidence ?? 0.7,
+    reasoning: "test",
+    audienceScope: AgentProposalAudience.TENANT,
+    tenantId,
+    targetTenantId: null,
+    status: AgentProposalStatus.PENDING,
+  };
+  prismaMock.agentProposal.findUnique.mockResolvedValue(proposal as never);
+  return proposal;
 }
+
+/** Open tasks returned by the merge-candidate query. */
+function givenOpenTasks(tasks: Array<{ id: string; title: string; priority: TaskPriority }>) {
+  prismaMock.maintenanceTask.findMany.mockResolvedValue(tasks as never);
+}
+
+const createdTask = () => (prismaMock.maintenanceTask.create.mock.calls[0][0] as any).data;
+const candidateQuery = () => (prismaMock.maintenanceTask.findMany.mock.calls[0][0] as any).where;
 
 // ─── Pure helpers ────────────────────────────────────────────
 
@@ -174,7 +124,7 @@ describe("clusterImpliedPriority", () => {
 
 describe("MAINTENANCE_TASK_CREATE — create path", () => {
   test("creates new MAINTENANCE_ONLY task with agent as submitter", async () => {
-    const proposal = await emitProposal({
+    const proposal = emitProposal({
       title: "Rink 1 surface bumpy",
       description: "Members report bumps near the head.",
       category: TaskCategory.RINK_SURFACE,
@@ -183,33 +133,35 @@ describe("MAINTENANCE_TASK_CREATE — create path", () => {
     });
 
     const result = await applyProposal({ proposalId: proposal.id, approverId });
+
     expect(result.committedEntityType).toBe("MaintenanceTask");
-    const task = await prisma.maintenanceTask.findUniqueOrThrow({
-      where: { id: result.committedEntityId! },
-    });
-    expect(task.visibility).toBe("MAINTENANCE_ONLY");
+    expect(result.committedEntityId).toBe("new-task");
+    expect(prismaMock.agentDefinition.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: agentId } }),
+    );
+    const task = createdTask();
+    // Visibility omitted so the schema default (MAINTENANCE_ONLY) applies.
+    expect(task).not.toHaveProperty("visibility");
+    expect(task.tenantId).toBe(tenantId);
     expect(task.submittedById).toBe(agentSystemUserId);
     expect(task.priority).toBe(TaskPriority.MEDIUM);
     expect(task.title).toBe("Rink 1 surface bumpy");
   });
 
   test("priority bumps from cluster signal (5 participants → HIGH)", async () => {
-    const proposal = await emitProposal({
+    const proposal = emitProposal({
       title: "Clubhouse heating broken",
       description: "x",
       category: TaskCategory.FACILITIES,
       priority: TaskPriority.MEDIUM, // proposed MEDIUM
       participantCount: 5, // implies HIGH
     });
-    const r = await applyProposal({ proposalId: proposal.id, approverId });
-    const task = await prisma.maintenanceTask.findUniqueOrThrow({
-      where: { id: r.committedEntityId! },
-    });
-    expect(task.priority).toBe(TaskPriority.HIGH);
+    await applyProposal({ proposalId: proposal.id, approverId });
+    expect(createdTask().priority).toBe(TaskPriority.HIGH);
   });
 
   test("severe tone goes URGENT regardless of low proposed priority", async () => {
-    const proposal = await emitProposal({
+    const proposal = emitProposal({
       title: "Loose paving slab safety hazard",
       description: "x",
       category: TaskCategory.SAFETY,
@@ -217,28 +169,23 @@ describe("MAINTENANCE_TASK_CREATE — create path", () => {
       participantCount: 1,
       toneSeverity: 1.0,
     });
-    const r = await applyProposal({ proposalId: proposal.id, approverId });
-    const task = await prisma.maintenanceTask.findUniqueOrThrow({
-      where: { id: r.committedEntityId! },
-    });
-    expect(task.priority).toBe(TaskPriority.URGENT);
+    await applyProposal({ proposalId: proposal.id, approverId });
+    expect(createdTask().priority).toBe(TaskPriority.URGENT);
   });
 
   test("approver edits override payload values", async () => {
-    const proposal = await emitProposal({
+    const proposal = emitProposal({
       title: "Bad title",
       description: "Bad desc",
       category: TaskCategory.GENERAL,
       priority: TaskPriority.LOW,
     });
-    const r = await applyProposal({
+    await applyProposal({
       proposalId: proposal.id,
       approverId,
       edits: { title: "Better title", priority: TaskPriority.HIGH },
     });
-    const task = await prisma.maintenanceTask.findUniqueOrThrow({
-      where: { id: r.committedEntityId! },
-    });
+    const task = createdTask();
     expect(task.title).toBe("Better title");
     expect(task.priority).toBe(TaskPriority.HIGH);
   });
@@ -249,18 +196,9 @@ describe("MAINTENANCE_TASK_CREATE — create path", () => {
 describe("MAINTENANCE_TASK_CREATE — merge path", () => {
   test("merges into open task with overlapping title; adds anonymised note; bumps priority", async () => {
     // Pre-existing open task
-    const existing = await prisma.maintenanceTask.create({
-      data: {
-        tenantId,
-        title: "Rink 3 surface uneven",
-        description: "Initial report",
-        category: TaskCategory.RINK_SURFACE,
-        priority: TaskPriority.MEDIUM,
-        submittedById: agentSystemUserId,
-      },
-    });
+    givenOpenTasks([{ id: "existing", title: "Rink 3 surface uneven", priority: TaskPriority.MEDIUM }]);
 
-    const proposal = await emitProposal({
+    const proposal = emitProposal({
       title: "Rink 3 surface uneven near south end",
       description: "More members reporting",
       category: TaskCategory.RINK_SURFACE,
@@ -270,82 +208,96 @@ describe("MAINTENANCE_TASK_CREATE — merge path", () => {
     });
 
     const r = await applyProposal({ proposalId: proposal.id, approverId });
-    expect(r.committedEntityId).toBe(existing.id);
+    expect(r.committedEntityId).toBe("existing");
+    expect(prismaMock.maintenanceTask.create).not.toHaveBeenCalled();
 
-    const after = await prisma.maintenanceTask.findUniqueOrThrow({ where: { id: existing.id } });
-    expect(after.priority).toBe(TaskPriority.HIGH);
+    expect(prismaMock.maintenanceTask.update).toHaveBeenCalledWith({
+      where: { id: "existing" },
+      data: { priority: TaskPriority.HIGH },
+    });
 
-    const notes = await prisma.taskNote.findMany({ where: { taskId: existing.id } });
-    expect(notes).toHaveLength(1);
-    expect(notes[0].userId).toBe(agentSystemUserId);
-    expect(notes[0].text).toContain("[Agent]");
-    expect(notes[0].text).toContain("frustrated");
+    expect(prismaMock.taskNote.create).toHaveBeenCalledTimes(1);
+    const note = (prismaMock.taskNote.create.mock.calls[0][0] as any).data;
+    expect(note.taskId).toBe("existing");
+    expect(note.userId).toBe(agentSystemUserId);
+    expect(note.text).toContain("[Agent]");
+    expect(note.text).toContain("frustrated");
     // Anonymisation discipline: no usernames or emails in note text
-    expect(notes[0].text).not.toContain("@");
+    expect(note.text).not.toContain("@");
+  });
+
+  test("only considers open tasks in the same tenant and category from the last 30 days", async () => {
+    const proposal = emitProposal({
+      title: "Sprinkler stuck on green 2",
+      description: "x",
+      category: TaskCategory.EQUIPMENT,
+      priority: TaskPriority.MEDIUM,
+    });
+    const before = Date.now();
+
+    await applyProposal({ proposalId: proposal.id, approverId });
+
+    const where = candidateQuery();
+    expect(where.tenantId).toBe(tenantId);
+    expect(where.category).toBe(TaskCategory.EQUIPMENT);
+    expect(where.status.in).toEqual(
+      expect.arrayContaining([TaskStatus.SUBMITTED, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]),
+    );
+    expect(where.status.in).not.toContain(TaskStatus.CLOSED);
+    const windowMs = before - (where.createdAt.gt as Date).getTime();
+    expect(windowMs).toBeGreaterThanOrEqual(30 * 24 * 3_600_000 - 1_000);
+    expect(windowMs).toBeLessThanOrEqual(30 * 24 * 3_600_000 + 1_000);
   });
 
   test("does not merge across categories", async () => {
-    await prisma.maintenanceTask.create({
-      data: {
-        tenantId,
-        title: "Sprinkler stuck on",
-        description: "x",
-        category: TaskCategory.GROUNDS,
-        priority: TaskPriority.MEDIUM,
-        submittedById: agentSystemUserId,
-      },
-    });
-    const proposal = await emitProposal({
+    // The only similar task is GROUNDS; the EQUIPMENT candidate query finds nothing.
+    const proposal = emitProposal({
       title: "Sprinkler stuck on green 2",
       description: "different category though",
       category: TaskCategory.EQUIPMENT, // ≠ GROUNDS
       priority: TaskPriority.MEDIUM,
     });
     await applyProposal({ proposalId: proposal.id, approverId });
-    const tasks = await prisma.maintenanceTask.findMany({
-      where: { tenantId },
-      orderBy: { createdAt: "asc" },
-    });
-    expect(tasks).toHaveLength(2);
+
+    expect(candidateQuery().category).toBe(TaskCategory.EQUIPMENT);
+    expect(prismaMock.maintenanceTask.create).toHaveBeenCalledTimes(1);
+    expect(prismaMock.taskNote.create).not.toHaveBeenCalled();
   });
 
   test("does not merge into closed tasks", async () => {
-    await prisma.maintenanceTask.create({
-      data: {
-        tenantId,
-        title: "Net torn rink 4",
-        description: "x",
-        category: TaskCategory.EQUIPMENT,
-        priority: TaskPriority.MEDIUM,
-        status: TaskStatus.CLOSED,
-        submittedById: agentSystemUserId,
-      },
-    });
-    const proposal = await emitProposal({
+    // A CLOSED "Net torn rink 4" exists, but the open-status query excludes it.
+    const proposal = emitProposal({
       title: "Net torn rink 4 again",
       description: "x",
       category: TaskCategory.EQUIPMENT,
       priority: TaskPriority.MEDIUM,
     });
     await applyProposal({ proposalId: proposal.id, approverId });
-    const open = await prisma.maintenanceTask.findMany({
-      where: { tenantId, status: { not: TaskStatus.CLOSED } },
+
+    expect(candidateQuery().status.in).not.toContain(TaskStatus.CLOSED);
+    expect(prismaMock.maintenanceTask.create).toHaveBeenCalledTimes(1); // the new one, not merged into closed
+    expect(prismaMock.taskNote.create).not.toHaveBeenCalled();
+  });
+
+  test("creates a new task when no open candidate has enough title overlap", async () => {
+    givenOpenTasks([{ id: "unrelated", title: "Clubhouse window broken", priority: TaskPriority.LOW }]);
+    const proposal = emitProposal({
+      title: "Rink 3 surface uneven",
+      description: "x",
+      category: TaskCategory.RINK_SURFACE,
+      priority: TaskPriority.MEDIUM,
     });
-    expect(open).toHaveLength(1); // the new one, not merged into closed
+
+    const r = await applyProposal({ proposalId: proposal.id, approverId });
+
+    expect(r.committedEntityId).toBe("new-task");
+    expect(prismaMock.taskNote.create).not.toHaveBeenCalled();
+    expect(prismaMock.maintenanceTask.update).not.toHaveBeenCalled();
   });
 
   test("note count reflects sourceMessageIds when participantCount missing", async () => {
-    const existing = await prisma.maintenanceTask.create({
-      data: {
-        tenantId,
-        title: "Greens watering schedule late",
-        description: "x",
-        category: TaskCategory.GROUNDS,
-        priority: TaskPriority.LOW,
-        submittedById: agentSystemUserId,
-      },
-    });
-    const proposal = await emitProposal({
+    givenOpenTasks([{ id: "existing", title: "Greens watering schedule late", priority: TaskPriority.LOW }]);
+    const proposal = emitProposal({
       title: "Greens watering schedule late again",
       description: "x",
       category: TaskCategory.GROUNDS,
@@ -353,7 +305,10 @@ describe("MAINTENANCE_TASK_CREATE — merge path", () => {
       sourceMessageIds: ["m1", "m2", "m3"],
     });
     await applyProposal({ proposalId: proposal.id, approverId });
-    const notes = await prisma.taskNote.findMany({ where: { taskId: existing.id } });
-    expect(notes[0].text).toContain("3 additional voices");
+    const note = (prismaMock.taskNote.create.mock.calls[0][0] as any).data;
+    expect(note.taskId).toBe("existing");
+    expect(note.text).toContain("3 additional voices");
+    // Priority already at max(LOW, LOW, LOW) — no update.
+    expect(prismaMock.maintenanceTask.update).not.toHaveBeenCalled();
   });
 });

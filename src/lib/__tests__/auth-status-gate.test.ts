@@ -1,6 +1,8 @@
-import { authOptions } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+
 import bcrypt from "bcryptjs";
+import { authOptions } from "@/lib/auth";
+import { prismaMock } from "@/test-utils/prisma-mock";
 
 // Pull the credentials provider's authorize function out of the shared
 // authOptions so we can exercise the gate logic directly. NextAuth wraps the
@@ -13,69 +15,64 @@ const authorize = authorizeFn as (
 ) => Promise<unknown | null>;
 
 const PASSWORD = "correct-horse-battery";
+const EMAIL = "admin@example.test";
+let passwordHash: string;
 
-const cleanup: { tenantIds: string[]; userIds: string[] } = { tenantIds: [], userIds: [] };
-
-afterAll(async () => {
-  await prisma.user.deleteMany({ where: { id: { in: cleanup.userIds } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: cleanup.tenantIds } } });
-  await prisma.$disconnect();
+beforeAll(async () => {
+  passwordHash = await bcrypt.hash(PASSWORD, 4);
 });
 
-async function makeUserWithTenant(status: "ACTIVE" | "ONBOARDING" | "SUSPENDED" | "CHURNED") {
-  const stamp = Date.now() + Math.random();
-  const tenant = await prisma.tenant.create({
-    data: {
-      name: `Auth Test ${status}`,
-      slug: `auth-${status.toLowerCase()}-${stamp}`,
-      status,
-      // Mirror the legacy active flag to whatever the seeder would set:
-      // only ACTIVE is "active=true" in the new world.
-      active: status === "ACTIVE",
-    },
-  });
-  cleanup.tenantIds.push(tenant.id);
-  const user = await prisma.user.create({
-    data: {
-      email: `auth-${status.toLowerCase()}-${stamp}@test.com`,
-      passwordHash: await bcrypt.hash(PASSWORD, 8),
-      role: "TENANT_ADMIN",
-      tenantId: tenant.id,
-    },
-  });
-  cleanup.userIds.push(user.id);
+type TenantStatus = "ACTIVE" | "ONBOARDING" | "SUSPENDED" | "CHURNED";
+
+/** A TENANT_ADMIN whose legacy User.tenantId points at a tenant with `status`. */
+function givenUserWithTenant(status: TenantStatus) {
+  const user = {
+    id: "user-1",
+    email: EMAIL,
+    name: null,
+    passwordHash,
+    role: "TENANT_ADMIN",
+    tenantId: "tenant-1",
+    suspended: false,
+    tenant: { id: "tenant-1", status, active: status === "ACTIVE" },
+  };
+  prismaMock.user.findUnique.mockResolvedValue(user as never);
   return user;
 }
 
 describe("credentials authorize() — tenant status gate", () => {
   test("ACTIVE tenant: sign-in allowed", async () => {
-    const user = await makeUserWithTenant("ACTIVE");
+    const user = givenUserWithTenant("ACTIVE");
     const result = await authorize({ email: user.email, password: PASSWORD });
     expect(result).not.toBeNull();
     expect((result as any).id).toBe(user.id);
+    expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+      where: { email: EMAIL },
+      include: { tenant: true },
+    });
   });
 
   test("ONBOARDING tenant: sign-in allowed (admins must drive the wizard)", async () => {
-    const user = await makeUserWithTenant("ONBOARDING");
+    const user = givenUserWithTenant("ONBOARDING");
     const result = await authorize({ email: user.email, password: PASSWORD });
     expect(result).not.toBeNull();
     expect((result as any).id).toBe(user.id);
   });
 
   test("SUSPENDED tenant: sign-in blocked", async () => {
-    const user = await makeUserWithTenant("SUSPENDED");
+    const user = givenUserWithTenant("SUSPENDED");
     const result = await authorize({ email: user.email, password: PASSWORD });
     expect(result).toBeNull();
   });
 
   test("CHURNED tenant: sign-in blocked", async () => {
-    const user = await makeUserWithTenant("CHURNED");
+    const user = givenUserWithTenant("CHURNED");
     const result = await authorize({ email: user.email, password: PASSWORD });
     expect(result).toBeNull();
   });
 
   test("Wrong password: sign-in blocked regardless of tenant status", async () => {
-    const user = await makeUserWithTenant("ACTIVE");
+    const user = givenUserWithTenant("ACTIVE");
     const result = await authorize({ email: user.email, password: "wrong" });
     expect(result).toBeNull();
   });

@@ -1,150 +1,75 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
-import { setFeatureFlag } from "@/lib/features";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
-
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { jsonRequest, readJson } from "@/test-utils/http";
+import { isoDateFromToday } from "@/test-utils/dates";
 import { POST } from "@/app/api/bookings/route";
 
-let homeClubId: string;
-let awayClubId: string;
-let homeAdminId: string;
-let homeUserId: string;
-let homeMembershipId: string;
-let homeRinkId: string;
-let awayRinkId: string;
-let federationId: string;
-let groupId: string;
+const HOME = "home-club";
+const AWAY = "away-club";
+const FED = "fed-1";
+const HOME_RINK = "home-rink";
+const AWAY_RINK = "away-rink";
+const HOME_USER = { id: "home-user", role: "USER" as const, tenantId: HOME };
+const HOME_ADMIN = { id: "home-admin", role: "TENANT_ADMIN" as const, tenantId: HOME };
 
-function homeUserSession() {
-  return {
-    session: {
-      user: { id: homeUserId, email: "fed-booker@test.com", name: "Booker", role: "USER", tenantId: homeClubId },
-    },
-  };
-}
+const book = (body: Record<string, unknown>) => POST(jsonRequest("POST", "/api/bookings", body));
 
-function homeAdminSession() {
-  return {
-    session: {
-      user: { id: homeAdminId, email: "fed-admin@test.com", name: "Admin", role: "TENANT_ADMIN", tenantId: homeClubId },
-    },
-  };
-}
-
-function makeJsonRequest(body: Record<string, unknown>): NextRequest {
-  return new NextRequest("http://localhost/api/bookings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-beforeAll(async () => {
-  const ts = Date.now();
-
-  // Two clubs
-  const home = await prisma.tenant.create({ data: { name: "Home Club", slug: `fed-bk-home-${ts}` } });
-  const away = await prisma.tenant.create({ data: { name: "Away Club", slug: `fed-bk-away-${ts}` } });
-  homeClubId = home.id;
-  awayClubId = away.id;
-
-  // Admin + regular user at home club
-  const admin = await prisma.user.create({
-    data: { email: `fed-bk-admin-${ts}@test.com`, name: "Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId: homeClubId },
-  });
-  homeAdminId = admin.id;
-
-  const user = await prisma.user.create({
-    data: { email: `fed-bk-user-${ts}@test.com`, name: "Booker", passwordHash: "x", role: "USER", tenantId: homeClubId },
-  });
-  homeUserId = user.id;
-
-  const membership = await prisma.membership.create({
-    data: { userId: homeUserId, tenantId: homeClubId, role: "USER", status: "ACTIVE" },
-  });
-  homeMembershipId = membership.id;
-
-  // Greens + rinks at both clubs
-  const homeGreen = await prisma.green.create({ data: { tenantId: homeClubId, name: "Home Green" } });
-  const homeRink = await prisma.rink.create({ data: { greenId: homeGreen.id, name: "Home Rink 1" } });
-  homeRinkId = homeRink.id;
-
-  const awayGreen = await prisma.green.create({ data: { tenantId: awayClubId, name: "Away Green" } });
-  const awayRink = await prisma.rink.create({ data: { greenId: awayGreen.id, name: "Away Rink 1" } });
-  awayRinkId = awayRink.id;
-
-  // Federation with both clubs as members
-  const fed = await prisma.federation.create({
-    data: {
-      name: `Test Cross-Club Fed ${ts}`,
-      createdByTenantId: homeClubId,
-      memberships: {
-        create: [
-          { tenantId: homeClubId, billingMode: "HOST_CLUB_RATE" },
-          { tenantId: awayClubId, billingMode: "FREE_ACCESS" },
-        ],
-      },
-    },
-  });
-  federationId = fed.id;
-
-  // Enable federation feature on home club
-  await setFeatureFlag(homeClubId, "federation", true);
-
-  // Permission group with federation_book_at_partners grant, assign user
-  const group = await prisma.permissionGroup.create({
-    data: {
-      tenantId: homeClubId,
-      name: `Federation Bookers ${ts}`,
-      grants: { create: [{ permission: "federation_book_at_partners" }] },
-      members: { create: [{ membershipId: homeMembershipId }] },
-    },
-  });
-  groupId = group.id;
+const rinkRow = (id: string, greenName: string) => ({
+  id,
+  greenId: `green-of-${id}`,
+  name: id,
+  green: { name: greenName, allWeather: false, seasonStartMMDD: null, seasonEndMMDD: null, seasons: [] },
 });
 
-afterAll(async () => {
-  await new Promise((r) => setTimeout(r, 200));
-  await prisma.auditEvent.deleteMany({ where: { tenantId: { in: [homeClubId, awayClubId] } } });
-  await prisma.auditEvent.deleteMany({ where: { actorId: { in: [homeAdminId, homeUserId] } } });
-  await prisma.bookingSlot.deleteMany({ where: { booking: { tenantId: { in: [homeClubId, awayClubId] } } } });
-  await prisma.booking.deleteMany({ where: { tenantId: { in: [homeClubId, awayClubId] } } });
-  await prisma.groupMember.deleteMany({ where: { group: { tenantId: homeClubId } } });
-  await prisma.permissionGrant.deleteMany({ where: { group: { tenantId: homeClubId } } });
-  await prisma.permissionGroup.deleteMany({ where: { tenantId: homeClubId } });
-  await prisma.membership.deleteMany({ where: { tenantId: homeClubId } });
-  await prisma.federationMembership.deleteMany({ where: { federationId } });
-  await prisma.federation.deleteMany({ where: { id: federationId } });
-  await prisma.featureFlag.deleteMany({ where: { tenantId: { in: [homeClubId, awayClubId] } } });
-  await prisma.rink.deleteMany({ where: { green: { tenantId: { in: [homeClubId, awayClubId] } } } });
-  await prisma.green.deleteMany({ where: { tenantId: { in: [homeClubId, awayClubId] } } });
-  await prisma.user.deleteMany({ where: { tenantId: { in: [homeClubId, awayClubId] } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: [homeClubId, awayClubId] } } });
+/** Grants the signed-in USER these permissions (TENANT_ADMIN bypasses this lookup). */
+function grantPermissions(...permissions: string[]) {
+  prismaMock.groupMember.findFirst.mockImplementation((async (args: any) =>
+    permissions.includes(args.where.group.grants.some.permission) ? { id: "gm-1" } : null) as never);
+}
+
+beforeEach(() => {
+  // Federation flag is on for the home club.
+  prismaMock.featureFlag.findUnique.mockImplementation((async (args: any) => {
+    const { tenantId, key } = args.where.tenantId_key;
+    return tenantId === HOME && key === "federation" ? { tenantId, key, enabled: true } : null;
+  }) as never);
+  // Away club exists.
+  prismaMock.tenant.findUnique.mockImplementation((async (args: any) =>
+    args.where.id === AWAY ? { id: AWAY } : null) as never);
+  // Home user is in a group granting federation_book_at_partners.
+  grantPermissions("federation_book_at_partners");
+  // Both clubs are active members of FED.
+  prismaMock.federationMembership.findMany.mockResolvedValue([{ federationId: FED }] as never);
+  prismaMock.federationMembership.findFirst.mockResolvedValue({ federationId: FED } as never);
+  // Rinks resolve within whichever tenant the route asks for.
+  prismaMock.rink.findMany.mockImplementation((async (args: any) =>
+    args.where.green.tenantId === AWAY ? [rinkRow(AWAY_RINK, "Away Green")] : [rinkRow(HOME_RINK, "Home Green")]) as never);
+  prismaMock.bookingSlot.findFirst.mockResolvedValue(null);
+  // No existing bookings for the user on the day unless a test says otherwise.
+  prismaMock.booking.findMany.mockResolvedValue([] as never);
+  prismaMock.booking.create.mockImplementation((async ({ data }: any) => ({
+    id: "new-booking",
+    ...data,
+    slots: data.slots.create,
+  })) as never);
 });
 
 // ── Same-club booking still works ─────────────────────────────
 
 describe("Same-club booking (no regression)", () => {
   test("booking at own club works without targetTenantId", async () => {
-    mockSessionReturn = homeUserSession();
-    const res = await POST(makeJsonRequest({
-      date: "2026-07-01",
-      slots: [{ rinkId: homeRinkId, timeSlot: "09:00" }],
-    }));
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.tenantId).toBe(homeClubId);
+    signInAs(HOME_USER);
+
+    const { status, body } = await readJson(await book({ date: isoDateFromToday(30), slots: [{ rinkId: HOME_RINK, timeSlot: "09:00" }] }));
+
+    expect(status).toBe(201);
+    expect(body.tenantId).toBe(HOME);
     expect(body.bookedByTenantId).toBeNull();
     expect(body.federationId).toBeNull();
+    expect(prismaMock.featureFlag.findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -152,129 +77,153 @@ describe("Same-club booking (no regression)", () => {
 
 describe("Cross-club booking via federation", () => {
   test("user with federation permission can book at partner club", async () => {
-    mockSessionReturn = homeUserSession();
-    const res = await POST(makeJsonRequest({
-      date: "2026-07-02",
-      targetTenantId: awayClubId,
-      slots: [{ rinkId: awayRinkId, timeSlot: "10:00" }],
-    }));
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.tenantId).toBe(awayClubId);
-    expect(body.bookedByTenantId).toBe(homeClubId);
-    expect(body.federationId).toBe(federationId);
+    signInAs(HOME_USER);
+
+    const { status, body } = await readJson(
+      await book({ date: isoDateFromToday(31), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] }),
+    );
+
+    expect(status).toBe(201);
+    expect(body.tenantId).toBe(AWAY);
+    expect(body.bookedByTenantId).toBe(HOME);
+    expect(body.federationId).toBe(FED);
+    expect(prismaMock.booking.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ tenantId: AWAY, bookedByTenantId: HOME, federationId: FED, userId: HOME_USER.id }),
+      }),
+    );
+  });
+
+  test("looks up the common federation and validates rinks against the target club", async () => {
+    signInAs(HOME_USER);
+
+    await book({ date: isoDateFromToday(31), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] });
+
+    expect(prismaMock.federationMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: HOME, leftAt: null, federation: { status: "ACTIVE" } } }),
+    );
+    expect(prismaMock.federationMembership.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: AWAY, leftAt: null, federationId: { in: [FED] }, federation: { status: "ACTIVE" } },
+      }),
+    );
+    expect(prismaMock.rink.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [AWAY_RINK] }, green: { tenantId: AWAY } } }),
+    );
   });
 
   test("user without federation permission gets 403", async () => {
-    // Remove user from group temporarily
-    await prisma.groupMember.deleteMany({ where: { membershipId: homeMembershipId } });
+    signInAs(HOME_USER);
+    grantPermissions();
 
-    mockSessionReturn = homeUserSession();
-    const res = await POST(makeJsonRequest({
-      date: "2026-07-03",
-      targetTenantId: awayClubId,
-      slots: [{ rinkId: awayRinkId, timeSlot: "10:00" }],
-    }));
-    expect(res.status).toBe(403);
-    const body = await res.json();
+    const { status, body } = await readJson(
+      await book({ date: isoDateFromToday(32), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] }),
+    );
+
+    expect(status).toBe(403);
     expect(body.error).toContain("permission");
-
-    // Restore
-    await prisma.groupMember.create({ data: { groupId, membershipId: homeMembershipId } });
+    expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
 
   test("TENANT_ADMIN can cross-club book (implicit all-permissions)", async () => {
-    mockSessionReturn = homeAdminSession();
-    const res = await POST(makeJsonRequest({
-      date: "2026-07-03",
-      targetTenantId: awayClubId,
-      slots: [{ rinkId: awayRinkId, timeSlot: "11:00" }],
-    }));
-    expect(res.status).toBe(201);
+    signInAs(HOME_ADMIN);
+    grantPermissions();
+
+    const { status } = await readJson(
+      await book({ date: isoDateFromToday(32), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "11:00" }] }),
+    );
+
+    expect(status).toBe(201);
+    expect(prismaMock.groupMember.findFirst).not.toHaveBeenCalled();
   });
 
   test("club not in federation gets 403", async () => {
-    // Leave away club from federation
-    await prisma.federationMembership.updateMany({
-      where: { federationId, tenantId: awayClubId },
-      data: { leftAt: new Date() },
-    });
+    signInAs(HOME_USER);
+    prismaMock.federationMembership.findFirst.mockResolvedValue(null); // away club has left
 
-    mockSessionReturn = homeUserSession();
-    const res = await POST(makeJsonRequest({
-      date: "2026-07-04",
-      targetTenantId: awayClubId,
-      slots: [{ rinkId: awayRinkId, timeSlot: "10:00" }],
-    }));
-    expect(res.status).toBe(403);
+    const { status } = await readJson(
+      await book({ date: isoDateFromToday(33), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] }),
+    );
 
-    // Restore
-    await prisma.federationMembership.updateMany({
-      where: { federationId, tenantId: awayClubId },
-      data: { leftAt: null },
-    });
+    expect(status).toBe(403);
+    expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
 
   test("federation feature disabled gets 403", async () => {
-    await setFeatureFlag(homeClubId, "federation", false);
+    signInAs(HOME_USER);
+    prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: false } as never);
 
-    mockSessionReturn = homeUserSession();
-    const res = await POST(makeJsonRequest({
-      date: "2026-07-05",
-      targetTenantId: awayClubId,
-      slots: [{ rinkId: awayRinkId, timeSlot: "10:00" }],
-    }));
-    expect(res.status).toBe(403);
+    const { status } = await readJson(
+      await book({ date: isoDateFromToday(34), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "10:00" }] }),
+    );
 
-    await setFeatureFlag(homeClubId, "federation", true);
+    expect(status).toBe(403);
+    expect(prismaMock.featureFlag.findUnique).toHaveBeenCalledWith({
+      where: { tenantId_key: { tenantId: HOME, key: "federation" } },
+    });
+    expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
 });
 
 // ── Cross-club clash detection ────────────────────────────────
 
 describe("Cross-club clash detection", () => {
-  test("same slot at different clubs returns CROSS_CLUB_CLASH", async () => {
-    // First: book at home club
-    mockSessionReturn = homeUserSession();
-    const homeRes = await POST(makeJsonRequest({
-      date: "2026-07-10",
-      slots: [{ rinkId: homeRinkId, timeSlot: "14:00-16:00" }],
-    }));
-    expect(homeRes.status).toBe(201);
+  /** The user already holds a 14:00-16:00 booking at the home club on `date`. */
+  function existingHomeBooking() {
+    prismaMock.booking.findMany.mockResolvedValue([
+      { id: "home-booking", slots: [{ timeSlot: "14:00-16:00" }], tenant: { name: "Home Club" } },
+    ] as never);
+  }
 
-    // Then: try to book same slot at away club
-    const awayRes = await POST(makeJsonRequest({
-      date: "2026-07-10",
-      targetTenantId: awayClubId,
-      slots: [{ rinkId: awayRinkId, timeSlot: "14:00-16:00" }],
-    }));
-    expect(awayRes.status).toBe(409);
-    const body = await awayRes.json();
+  test("same slot at different clubs returns CROSS_CLUB_CLASH", async () => {
+    signInAs(HOME_USER);
+    existingHomeBooking();
+    const date = isoDateFromToday(40);
+
+    const { status, body } = await readJson(
+      await book({ date, targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "14:00-16:00" }] }),
+    );
+
+    expect(status).toBe(409);
     expect(body.error).toBe("CROSS_CLUB_CLASH");
     expect(body.confirm).toBe(true);
+    expect(body.existingBooking).toEqual({ id: "home-booking", tenantName: "Home Club", timeSlot: "14:00-16:00" });
+    expect(prismaMock.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: HOME_USER.id, date, status: { in: ["APPROVED", "RESERVED", "CONFIRMED", "REQUESTED"] } },
+      }),
+    );
+    expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
 
   test("adjacent slot returns CROSS_CLUB_CONSECUTIVE", async () => {
-    mockSessionReturn = homeUserSession();
-    const res = await POST(makeJsonRequest({
-      date: "2026-07-10",
-      targetTenantId: awayClubId,
-      slots: [{ rinkId: awayRinkId, timeSlot: "16:00-18:00" }],
-    }));
-    expect(res.status).toBe(409);
-    const body = await res.json();
+    signInAs(HOME_USER);
+    existingHomeBooking();
+
+    const { status, body } = await readJson(
+      await book({ date: isoDateFromToday(40), targetTenantId: AWAY, slots: [{ rinkId: AWAY_RINK, timeSlot: "16:00-18:00" }] }),
+    );
+
+    expect(status).toBe(409);
     expect(body.error).toBe("CROSS_CLUB_CONSECUTIVE");
     expect(body.confirm).toBe(true);
+    expect(prismaMock.booking.create).not.toHaveBeenCalled();
   });
 
   test("confirmClash bypasses clash warning", async () => {
-    mockSessionReturn = homeUserSession();
-    const res = await POST(makeJsonRequest({
-      date: "2026-07-10",
-      targetTenantId: awayClubId,
-      confirmClash: true,
-      slots: [{ rinkId: awayRinkId, timeSlot: "14:00-16:00" }],
-    }));
-    expect(res.status).toBe(201);
+    signInAs(HOME_USER);
+    existingHomeBooking();
+
+    const { status } = await readJson(
+      await book({
+        date: isoDateFromToday(40),
+        targetTenantId: AWAY,
+        confirmClash: true,
+        slots: [{ rinkId: AWAY_RINK, timeSlot: "14:00-16:00" }],
+      }),
+    );
+
+    expect(status).toBe(201);
+    expect(prismaMock.booking.findMany).not.toHaveBeenCalled();
   });
 });

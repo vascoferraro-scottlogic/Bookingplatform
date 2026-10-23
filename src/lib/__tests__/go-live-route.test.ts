@@ -1,238 +1,196 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
+jest.mock("@/lib/audit", () => ({ logAudit: jest.fn() }));
+jest.mock("@/lib/outbound", () => ({ sendEmail: jest.fn(), sendSocial: jest.fn() }));
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
-
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { readJson, request } from "@/test-utils/http";
+import { dateFromToday, hoursFromNow } from "@/test-utils/dates";
+import { logAudit } from "@/lib/audit";
+import { sendEmail, sendSocial } from "@/lib/outbound";
 import { GET, POST } from "@/app/api/onboarding/go-live/route";
 
-let tenantId: string;
-let tenantAdminId: string;
-const cleanup: { tenantIds: string[]; userIds: string[] } = { tenantIds: [], userIds: [] };
-
-function adminSession() {
-  return {
-    session: {
-      user: {
-        id: tenantAdminId,
-        email: "gl-admin@test.com",
-        name: "GL Admin",
-        role: "TENANT_ADMIN",
-        tenantId,
-        actingAs: null,
-      },
-    },
-  };
-}
-
+const TENANT = "t1";
+const REAL_SLUG = "lakeview-bowls";
+const PLACEHOLDER_SLUG = "t-1a2b3c4d";
+// NB: chapters 1-8 count as "all required" — 9 and 10 are not checked. This
+// mirrors current route behaviour (known defect, corrected in a later stage).
 const ALL_REQUIRED = JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8]);
 
-async function resetTenantToOnboardingWithRealSlug() {
-  const stamp = Date.now();
-  await prisma.tenant.update({
-    where: { id: tenantId },
-    data: { status: "ONBOARDING", active: false, goLiveAt: null, slug: `gl-real-${stamp}` },
-  });
+const getReadiness = async () => readJson(await GET(request("/api/onboarding/go-live")));
+const goLive = async () => readJson(await POST(request("/api/onboarding/go-live", { method: "POST" })));
+
+function givenTenant(overrides: Record<string, unknown> = {}) {
+  prismaMock.tenant.findUnique.mockResolvedValue({
+    id: TENANT,
+    name: "GL Test Club",
+    slug: REAL_SLUG,
+    status: "ONBOARDING",
+    goLiveAt: null,
+    locality: null,
+    ...overrides,
+  } as never);
 }
 
-async function setProgress(opts: { completedChapters?: string; subscriptionAttestedAt?: Date | null }) {
-  const data = {
+function givenProgress(opts: { completedChapters?: string; subscriptionAttestedAt?: Date | null }) {
+  prismaMock.onboardingProgress.findUnique.mockResolvedValue({
     completedChapters: opts.completedChapters ?? "[]",
     subscriptionAttestedAt: opts.subscriptionAttestedAt ?? null,
-  };
-  await prisma.onboardingProgress.upsert({
-    where: { tenantId },
-    update: { ...data, completedAt: null },
-    create: { tenantId, currentChapter: 1, ...data },
-  });
+    completedAt: null,
+  } as never);
 }
 
-beforeAll(async () => {
-  const stamp = Date.now();
-  const tenant = await prisma.tenant.create({
-    data: { name: "GL Test Club", slug: `t-${stamp.toString(16).slice(-8)}`, status: "ONBOARDING", active: false },
-  });
-  tenantId = tenant.id;
-  cleanup.tenantIds.push(tenant.id);
+function queuedInvitation(id: string) {
+  return { id, email: `${id}@test.com`, role: "USER", token: `tok-${id}`, expiresAt: dateFromToday(14) };
+}
 
-  const admin = await prisma.user.create({
-    data: { email: `gl-admin-${stamp}@test.com`, name: "GL Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId },
-  });
-  tenantAdminId = admin.id;
-  cleanup.userIds.push(admin.id);
-});
-
-afterAll(async () => {
-  await prisma.userInvitation.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.outboundMessage.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.auditEvent.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.auditEvent.deleteMany({ where: { actorId: { in: cleanup.userIds } } });
-  await prisma.onboardingProgress.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.user.updateMany({ where: { tenantId: { in: cleanup.tenantIds } }, data: { tenantId: null } });
-  await prisma.user.deleteMany({ where: { id: { in: cleanup.userIds } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: cleanup.tenantIds } } });
-  await prisma.$disconnect();
+beforeEach(() => {
+  jest.mocked(logAudit).mockClear();
+  jest.mocked(sendEmail).mockClear();
+  jest.mocked(sendSocial).mockClear();
+  signInAs({ id: "admin-1", role: "TENANT_ADMIN", tenantId: TENANT, name: "GL Admin" });
+  prismaMock.userInvitation.count.mockResolvedValue(0);
+  prismaMock.userInvitation.findMany.mockResolvedValue([]);
 });
 
 describe("/api/onboarding/go-live", () => {
-  beforeEach(() => {
-    mockSessionReturn = adminSession();
-  });
-
   describe("GET (readiness)", () => {
     test("reports placeholder-slug as a blocker", async () => {
-      const stamp = Date.now();
-      await prisma.tenant.update({
-        where: { id: tenantId },
-        data: { status: "ONBOARDING", active: false, goLiveAt: null, slug: `t-${stamp.toString(16).slice(-8)}` },
-      });
-      await setProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: new Date() });
+      givenTenant({ slug: PLACEHOLDER_SLUG });
+      givenProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: hoursFromNow(-1) });
 
-      const res = await GET(new NextRequest("http://localhost/api/onboarding/go-live"));
-      expect(res.status).toBe(200);
-      const body = await res.json();
+      const { status, body } = await getReadiness();
+
+      expect(status).toBe(200);
       expect(body.ready).toBe(false);
-      expect(body.blockers.some((b: string) => /public URL/i.test(b))).toBe(true);
+      expect(body.blockers).toEqual([expect.stringMatching(/public URL/i)]);
     });
 
     test("reports missing chapters and missing subscription as blockers", async () => {
-      await resetTenantToOnboardingWithRealSlug();
-      await setProgress({ completedChapters: JSON.stringify([1, 2]), subscriptionAttestedAt: null });
+      givenTenant();
+      givenProgress({ completedChapters: JSON.stringify([1, 2]), subscriptionAttestedAt: null });
 
-      const res = await GET(new NextRequest("http://localhost/api/onboarding/go-live"));
-      const body = await res.json();
+      const { status, body } = await getReadiness();
+
+      expect(status).toBe(200);
       expect(body.ready).toBe(false);
-      expect(body.blockers.some((b: string) => /chapter/i.test(b))).toBe(true);
-      expect(body.blockers.some((b: string) => /subscription/i.test(b))).toBe(true);
+      expect(body.blockers).toEqual(
+        expect.arrayContaining([expect.stringMatching(/chapter/i), expect.stringMatching(/subscription/i)]),
+      );
     });
 
     test("reports ready when all prereqs met", async () => {
-      await resetTenantToOnboardingWithRealSlug();
-      await setProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: new Date() });
+      givenTenant();
+      givenProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: hoursFromNow(-1) });
 
-      const res = await GET(new NextRequest("http://localhost/api/onboarding/go-live"));
-      const body = await res.json();
+      const { body } = await getReadiness();
+
       expect(body.ready).toBe(true);
       expect(body.blockers).toEqual([]);
     });
 
-    test("counts queued invitations", async () => {
-      await resetTenantToOnboardingWithRealSlug();
-      await setProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: new Date() });
-      await prisma.userInvitation.deleteMany({ where: { tenantId } });
-      const stamp = Date.now();
-      await prisma.userInvitation.createMany({
-        data: [
-          {
-            tenantId,
-            email: `q1-${stamp}@test.com`,
-            role: "USER",
-            token: `tok-q1-${stamp}`,
-            status: "QUEUED",
-            invitedById: tenantAdminId,
-            expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-          },
-          {
-            tenantId,
-            email: `q2-${stamp}@test.com`,
-            role: "USER",
-            token: `tok-q2-${stamp}`,
-            status: "QUEUED",
-            invitedById: tenantAdminId,
-            expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-          },
-        ],
-      });
+    test("counts queued invitations for this tenant", async () => {
+      givenTenant();
+      givenProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: hoursFromNow(-1) });
+      prismaMock.userInvitation.count.mockResolvedValue(2);
 
-      const res = await GET(new NextRequest("http://localhost/api/onboarding/go-live"));
-      const body = await res.json();
+      const { body } = await getReadiness();
+
       expect(body.queuedInvitationCount).toBe(2);
+      expect(prismaMock.userInvitation.count).toHaveBeenCalledWith({ where: { tenantId: TENANT, status: "QUEUED" } });
     });
   });
 
   describe("POST (flip)", () => {
     test("blocks when prereqs unmet", async () => {
-      await resetTenantToOnboardingWithRealSlug();
-      await setProgress({ completedChapters: JSON.stringify([1]), subscriptionAttestedAt: null });
+      givenTenant();
+      givenProgress({ completedChapters: JSON.stringify([1]), subscriptionAttestedAt: null });
 
-      const res = await POST(new NextRequest("http://localhost/api/onboarding/go-live", { method: "POST" }));
-      expect(res.status).toBe(400);
+      const { status } = await goLive();
 
-      const refreshed = await prisma.tenant.findUnique({ where: { id: tenantId } });
-      expect(refreshed?.status).toBe("ONBOARDING");
-      expect(refreshed?.goLiveAt).toBeNull();
+      expect(status).toBe(400);
+      expect(prismaMock.tenant.update).not.toHaveBeenCalled();
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
     });
 
     test("blocks when slug is still a placeholder", async () => {
-      const stamp = Date.now();
-      await prisma.tenant.update({
-        where: { id: tenantId },
-        data: { status: "ONBOARDING", active: false, goLiveAt: null, slug: `t-${stamp.toString(16).slice(-8)}` },
-      });
-      await setProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: new Date() });
+      givenTenant({ slug: PLACEHOLDER_SLUG });
+      givenProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: hoursFromNow(-1) });
 
-      const res = await POST(new NextRequest("http://localhost/api/onboarding/go-live", { method: "POST" }));
-      expect(res.status).toBe(400);
-      const body = await res.json();
+      const { status, body } = await goLive();
+
+      expect(status).toBe(400);
       expect(body.error).toMatch(/public URL/i);
+      expect(prismaMock.tenant.update).not.toHaveBeenCalled();
     });
 
     test("flips status, releases QUEUED invitations, fires outbound, audits", async () => {
-      await resetTenantToOnboardingWithRealSlug();
-      await setProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: new Date() });
-      await prisma.userInvitation.deleteMany({ where: { tenantId } });
-      await prisma.outboundMessage.deleteMany({ where: { tenantId } });
-      await prisma.auditEvent.deleteMany({ where: { tenantId } });
+      givenTenant();
+      givenProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: hoursFromNow(-1) });
+      prismaMock.userInvitation.findMany.mockResolvedValue([queuedInvitation("release")] as never);
 
-      const stamp = Date.now();
-      await prisma.userInvitation.create({
-        data: {
-          tenantId,
-          email: `release-${stamp}@test.com`,
-          role: "USER",
-          token: `tok-release-${stamp}`,
-          status: "QUEUED",
-          invitedById: tenantAdminId,
-          expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-        },
+      const { status, body } = await goLive();
+
+      expect(status).toBe(200);
+      expect(body).toEqual(expect.objectContaining({ ok: true, slug: REAL_SLUG, releasedInvitations: 1 }));
+
+      expect(prismaMock.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT },
+        data: { status: "ACTIVE", active: true, goLiveAt: expect.any(Date) },
       });
+      expect(prismaMock.userInvitation.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT, status: "QUEUED" },
+        data: { status: "PENDING" },
+      });
+      expect(prismaMock.onboardingProgress.update).toHaveBeenCalledWith({
+        where: { tenantId: TENANT },
+        data: { completedAt: expect.any(Date) },
+      });
+      expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
 
-      const res = await POST(new NextRequest("http://localhost/api/onboarding/go-live", { method: "POST" }));
-      expect(res.status).toBe(200);
+      // Invitation email + tenant-joined social post.
+      expect(sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "release@test.com",
+          template: "invitation",
+          tenantId: TENANT,
+          relatedEntityId: "release",
+          data: expect.objectContaining({ acceptUrl: expect.stringContaining("/invite/tok-release") }),
+        }),
+      );
+      expect(sendSocial).toHaveBeenCalledWith(
+        expect.objectContaining({ template: "tenant-joined", tenantId: TENANT }),
+      );
+      expect(logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "tenant.went_live",
+          tenantId: TENANT,
+          meta: { slug: REAL_SLUG, releasedInvitations: 1 },
+        }),
+      );
+    });
 
-      const refreshed = await prisma.tenant.findUnique({ where: { id: tenantId } });
-      expect(refreshed?.status).toBe("ACTIVE");
-      expect(refreshed?.active).toBe(true);
-      expect(refreshed?.goLiveAt).toBeTruthy();
+    test("go-live still succeeds when an outbound send fails", async () => {
+      givenTenant();
+      givenProgress({ completedChapters: ALL_REQUIRED, subscriptionAttestedAt: hoursFromNow(-1) });
+      prismaMock.userInvitation.findMany.mockResolvedValue([queuedInvitation("a")] as never);
+      jest.mocked(sendEmail).mockRejectedValueOnce(new Error("smtp down"));
 
-      const released = await prisma.userInvitation.findMany({ where: { tenantId } });
-      expect(released.every((i) => i.status === "PENDING")).toBe(true);
+      const { status } = await goLive();
 
-      // Give async after-commit outbound + audit a tick.
-      await new Promise((r) => setTimeout(r, 100));
-
-      const outbound = await prisma.outboundMessage.findMany({ where: { tenantId } });
-      // At least one invitation email + one tenant-joined social post.
-      expect(outbound.length).toBeGreaterThanOrEqual(1);
-
-      const audits = await prisma.auditEvent.findMany({ where: { tenantId, action: "tenant.went_live" } });
-      expect(audits.length).toBeGreaterThanOrEqual(1);
-
-      const progress = await prisma.onboardingProgress.findUnique({ where: { tenantId } });
-      expect(progress?.completedAt).toBeTruthy();
+      expect(status).toBe(200);
+      expect(prismaMock.tenant.update).toHaveBeenCalled();
+      expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "tenant.went_live" }));
     });
 
     test("rejects re-going-live (already live)", async () => {
-      // tenant is now ACTIVE from previous test
-      const res = await POST(new NextRequest("http://localhost/api/onboarding/go-live", { method: "POST" }));
-      expect(res.status).toBe(409);
+      givenTenant({ status: "ACTIVE", goLiveAt: dateFromToday(-1) });
+
+      const { status } = await goLive();
+
+      expect(status).toBe(409);
+      expect(prismaMock.tenant.update).not.toHaveBeenCalled();
     });
   });
 });

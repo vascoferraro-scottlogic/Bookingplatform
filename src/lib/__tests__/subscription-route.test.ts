@@ -1,118 +1,96 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
+jest.mock("@/lib/audit", () => ({ logAudit: jest.fn() }));
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
-
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { readJson, request } from "@/test-utils/http";
+import { hoursFromNow } from "@/test-utils/dates";
+import { logAudit } from "@/lib/audit";
 import { GET, POST } from "@/app/api/onboarding/subscription/route";
 
-let tenantId: string;
-let tenantAdminId: string;
-const cleanup: { tenantIds: string[]; userIds: string[] } = { tenantIds: [], userIds: [] };
+const TENANT = "t1";
 
-function adminSession() {
-  return {
-    session: {
-      user: {
-        id: tenantAdminId,
-        email: "sub-admin@test.com",
-        name: "Sub Admin",
-        role: "TENANT_ADMIN",
-        tenantId,
-        actingAs: null,
-      },
-    },
-  };
-}
+const getSubscription = async () => readJson(await GET(request("/api/onboarding/subscription")));
+const attest = async () => readJson(await POST(request("/api/onboarding/subscription", { method: "POST" })));
 
-beforeAll(async () => {
-  const stamp = Date.now();
-  const tenant = await prisma.tenant.create({
-    data: { name: "Sub Test Club", slug: `sub-test-${stamp}`, status: "ONBOARDING", active: false },
-  });
-  tenantId = tenant.id;
-  cleanup.tenantIds.push(tenant.id);
-
-  const admin = await prisma.user.create({
-    data: { email: `sub-admin-${stamp}@test.com`, name: "Sub Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId },
-  });
-  tenantAdminId = admin.id;
-  cleanup.userIds.push(admin.id);
-});
-
-afterAll(async () => {
-  await prisma.auditEvent.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.auditEvent.deleteMany({ where: { actorId: { in: cleanup.userIds } } });
-  await prisma.onboardingProgress.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.tenantBillingProfile.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.user.updateMany({ where: { tenantId: { in: cleanup.tenantIds } }, data: { tenantId: null } });
-  await prisma.user.deleteMany({ where: { id: { in: cleanup.userIds } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: cleanup.tenantIds } } });
-  await prisma.$disconnect();
+beforeEach(() => {
+  jest.mocked(logAudit).mockClear();
+  signInAs({ id: "admin-1", role: "TENANT_ADMIN", tenantId: TENANT });
+  prismaMock.onboardingProgress.create.mockImplementation((async ({ data }: any) => ({
+    id: "p1",
+    subscriptionAttestedAt: data.subscriptionAttestedAt,
+  })) as never);
 });
 
 describe("/api/onboarding/subscription", () => {
-  beforeEach(() => {
-    mockSessionReturn = adminSession();
-  });
-
   test("GET reports not-attested initially", async () => {
-    await prisma.onboardingProgress.deleteMany({ where: { tenantId } });
-    const res = await GET(new NextRequest("http://localhost/api/onboarding/subscription"));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(null);
+
+    const { status, body } = await getSubscription();
+
+    expect(status).toBe(200);
     expect(body.attested).toBe(false);
     expect(body.attestedAt).toBeNull();
+    expect(prismaMock.onboardingProgress.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: TENANT } }),
+    );
   });
 
   test("POST sets the timestamp and audits", async () => {
-    await prisma.onboardingProgress.deleteMany({ where: { tenantId } });
-    await prisma.auditEvent.deleteMany({ where: { tenantId } });
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(null);
+    prismaMock.platformPlan.findFirst.mockResolvedValue({ id: "plan-basic" } as never);
+    prismaMock.tenantBillingProfile.findUnique.mockResolvedValue(null);
 
-    const res = await POST(new NextRequest("http://localhost/api/onboarding/subscription", { method: "POST" }));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    const { status, body } = await attest();
+
+    expect(status).toBe(200);
     expect(body.attested).toBe(true);
     expect(body.attestedAt).toBeTruthy();
-
-    const progress = await prisma.onboardingProgress.findUnique({ where: { tenantId } });
-    expect(progress?.subscriptionAttestedAt).toBeTruthy();
-
-    // give the fire-and-forget audit a tick to land
-    await new Promise((r) => setTimeout(r, 50));
-    const audits = await prisma.auditEvent.findMany({
-      where: { tenantId, action: "onboarding.subscription.attested" },
+    expect(prismaMock.onboardingProgress.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { tenantId: TENANT, subscriptionAttestedAt: expect.any(Date) } }),
+    );
+    expect(prismaMock.tenantBillingProfile.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ tenantId: TENANT, planId: "plan-basic", billingStatus: "TRIAL" }),
     });
-    expect(audits.length).toBeGreaterThanOrEqual(1);
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "onboarding.subscription.attested",
+        entityId: "p1",
+        tenantId: TENANT,
+        meta: { planId: "plan-basic" },
+      }),
+    );
   });
 
   test("POST is idempotent (re-attesting is a no-op)", async () => {
-    // From previous test, attestation is set.
-    const before = await prisma.onboardingProgress.findUnique({ where: { tenantId } });
-    expect(before?.subscriptionAttestedAt).toBeTruthy();
-    const firstTimestamp = before!.subscriptionAttestedAt!.toISOString();
+    const firstTimestamp = hoursFromNow(-2);
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue({
+      id: "p1",
+      subscriptionAttestedAt: firstTimestamp,
+    } as never);
 
-    const res = await POST(new NextRequest("http://localhost/api/onboarding/subscription", { method: "POST" }));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    const { status, body } = await attest();
+
+    expect(status).toBe(200);
     expect(body.attested).toBe(true);
     expect(body.unchanged).toBe(true);
-
-    const after = await prisma.onboardingProgress.findUnique({ where: { tenantId } });
-    expect(after!.subscriptionAttestedAt!.toISOString()).toBe(firstTimestamp);
+    expect(body.attestedAt).toBe(firstTimestamp.toISOString());
+    expect(prismaMock.onboardingProgress.create).not.toHaveBeenCalled();
+    expect(prismaMock.onboardingProgress.update).not.toHaveBeenCalled();
+    expect(prismaMock.tenantBillingProfile.create).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
   });
 
   test("GET reports attested once set", async () => {
-    const res = await GET(new NextRequest("http://localhost/api/onboarding/subscription"));
-    const body = await res.json();
+    const attestedAt = hoursFromNow(-1);
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue({ subscriptionAttestedAt: attestedAt } as never);
+    prismaMock.tenantBillingProfile.findUnique.mockResolvedValue({ planId: "plan-basic" } as never);
+
+    const { body } = await getSubscription();
+
     expect(body.attested).toBe(true);
-    expect(body.attestedAt).toBeTruthy();
+    expect(body.attestedAt).toBe(attestedAt.toISOString());
+    expect(body.planId).toBe("plan-basic");
   });
 });

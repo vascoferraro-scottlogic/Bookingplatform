@@ -1,143 +1,85 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
+jest.mock("@/lib/audit", () => ({ logAudit: jest.fn() }));
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
-
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { jsonRequest, readJson, request } from "@/test-utils/http";
+import { dateFromToday } from "@/test-utils/dates";
+import { logAudit } from "@/lib/audit";
 import { GET, PATCH } from "@/app/api/onboarding/slug/route";
 
-let tenantId: string;
-let otherTenantId: string;
-let liveTenantId: string;
-let tenantAdminId: string;
-let liveAdminId: string;
-const cleanup: { tenantIds: string[]; userIds: string[] } = { tenantIds: [], userIds: [] };
+const TENANT = "t1";
+const OTHER_TENANT_SLUG = "slug-other";
 
-function adminSession(forTenant: string, userId: string) {
-  return {
-    session: {
-      user: {
-        id: userId,
-        email: "slug-admin@test.com",
-        name: "Slug Admin",
-        role: "TENANT_ADMIN",
-        tenantId: forTenant,
-        actingAs: null,
-      },
-    },
-  };
+type TenantRow = { id: string; slug: string; status: string; goLiveAt: Date | null };
+
+/** Tenants the route can look up, by id or by slug. */
+function givenTenants(rows: TenantRow[]) {
+  prismaMock.tenant.findUnique.mockImplementation((async ({ where }: any) => {
+    const row = rows.find((r) => (where.id ? r.id === where.id : r.slug === where.slug));
+    return row ?? null;
+  }) as never);
 }
 
-function patchReq(body: Record<string, unknown>) {
-  return new NextRequest("http://localhost/api/onboarding/slug", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
+const onboardingTenant: TenantRow = { id: TENANT, slug: "t-1a2b3c4d", status: "ONBOARDING", goLiveAt: null };
+const otherTenant: TenantRow = { id: "t-other", slug: OTHER_TENANT_SLUG, status: "ACTIVE", goLiveAt: null };
+const liveTenant: TenantRow = { id: "t-live", slug: "slug-live", status: "ACTIVE", goLiveAt: dateFromToday(-1) };
 
-function getReq(candidate?: string) {
-  const url = candidate
-    ? `http://localhost/api/onboarding/slug?candidate=${encodeURIComponent(candidate)}`
-    : "http://localhost/api/onboarding/slug";
-  return new NextRequest(url);
-}
+const check = async (candidate: string) =>
+  readJson(await GET(request(`/api/onboarding/slug?candidate=${encodeURIComponent(candidate)}`)));
+const setSlug = async (slug: string) => readJson(await PATCH(jsonRequest("PATCH", "/api/onboarding/slug", { slug })));
 
-beforeAll(async () => {
-  const stamp = Date.now();
-  const t = await prisma.tenant.create({
-    data: { name: "Slug Test Club", slug: `t-${stamp.toString(16).slice(-8)}`, status: "ONBOARDING", active: false },
-  });
-  tenantId = t.id;
-  cleanup.tenantIds.push(t.id);
-
-  const other = await prisma.tenant.create({
-    data: { name: "Other Club", slug: `slug-other-${stamp}`, status: "ACTIVE", active: true },
-  });
-  otherTenantId = other.id;
-  cleanup.tenantIds.push(other.id);
-
-  const live = await prisma.tenant.create({
-    data: {
-      name: "Live Club",
-      slug: `slug-live-${stamp}`,
-      status: "ACTIVE",
-      active: true,
-      goLiveAt: new Date(),
-    },
-  });
-  liveTenantId = live.id;
-  cleanup.tenantIds.push(live.id);
-
-  const admin = await prisma.user.create({
-    data: { email: `slug-admin-${stamp}@test.com`, name: "Slug Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId },
-  });
-  tenantAdminId = admin.id;
-  cleanup.userIds.push(admin.id);
-
-  const liveAdmin = await prisma.user.create({
-    data: { email: `slug-live-admin-${stamp}@test.com`, name: "Live Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId: liveTenantId },
-  });
-  liveAdminId = liveAdmin.id;
-  cleanup.userIds.push(liveAdmin.id);
-});
-
-afterAll(async () => {
-  await prisma.auditEvent.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.auditEvent.deleteMany({ where: { actorId: { in: cleanup.userIds } } });
-  await prisma.user.updateMany({ where: { tenantId: { in: cleanup.tenantIds } }, data: { tenantId: null } });
-  await prisma.user.deleteMany({ where: { id: { in: cleanup.userIds } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: cleanup.tenantIds } } });
-  await prisma.$disconnect();
+beforeEach(() => {
+  jest.mocked(logAudit).mockClear();
+  signInAs({ id: "admin-1", role: "TENANT_ADMIN", tenantId: TENANT });
+  givenTenants([onboardingTenant, otherTenant, liveTenant]);
+  prismaMock.tenant.update.mockImplementation((async ({ data }: any) => ({ slug: data.slug })) as never);
 });
 
 describe("/api/onboarding/slug", () => {
-  beforeEach(() => {
-    mockSessionReturn = adminSession(tenantId, tenantAdminId);
-  });
-
   describe("GET (availability check)", () => {
     test("reports available for a fresh valid slug", async () => {
-      const res = await GET(getReq("my-fresh-club"));
-      expect(res.status).toBe(200);
-      const body = await res.json();
+      const { status, body } = await check("my-fresh-club");
+
+      expect(status).toBe(200);
       expect(body.available).toBe(true);
       expect(body.slug).toBe("my-fresh-club");
+      expect(prismaMock.tenant.findUnique).toHaveBeenCalledWith({ where: { slug: "my-fresh-club" }, select: { id: true } });
     });
 
     test("reports unavailable for a reserved slug", async () => {
-      const res = await GET(getReq("dashboard"));
-      const body = await res.json();
+      const { body } = await check("dashboard");
+
       expect(body.available).toBe(false);
       expect(body.reason).toMatch(/reserved/i);
     });
 
     test("reports unavailable for a taken slug", async () => {
-      const other = await prisma.tenant.findUnique({ where: { id: otherTenantId } });
-      const res = await GET(getReq(other!.slug));
-      const body = await res.json();
+      const { body } = await check(OTHER_TENANT_SLUG);
+
       expect(body.available).toBe(false);
       expect(body.reason).toMatch(/taken/i);
     });
 
-    test("rejects invalid format (leading hyphen, too short, illegal chars)", async () => {
-      const a = await (await GET(getReq("-leading"))).json();
-      expect(a.available).toBe(false);
-      const b = await (await GET(getReq("ab"))).json();
-      expect(b.available).toBe(false);
-      const c = await (await GET(getReq("bad slug"))).json();
-      expect(c.available).toBe(false);
+    test("reports available for the caller's own current slug", async () => {
+      givenTenants([{ ...onboardingTenant, slug: "my-own-club" }]);
+
+      const { body } = await check("my-own-club");
+
+      expect(body.available).toBe(true);
+    });
+
+    test.each(["-leading", "ab", "bad slug"])("rejects invalid format %p", async (candidate) => {
+      const { body } = await check(candidate);
+
+      expect(body.available).toBe(false);
+      expect(prismaMock.tenant.findUnique).not.toHaveBeenCalled();
     });
 
     test("rejects consecutive hyphens", async () => {
-      const body = await (await GET(getReq("foo--bar"))).json();
+      const { body } = await check("foo--bar");
+
       expect(body.available).toBe(false);
       expect(body.reason).toMatch(/hyphen/i);
     });
@@ -145,39 +87,53 @@ describe("/api/onboarding/slug", () => {
 
   describe("PATCH (set slug)", () => {
     test("sets a valid slug on an onboarding tenant", async () => {
-      const stamp = Date.now();
-      const candidate = `chosen-${stamp}`;
-      const res = await PATCH(patchReq({ slug: candidate }));
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.slug).toBe(candidate);
+      const { status, body } = await setSlug("chosen-club");
 
-      const refreshed = await prisma.tenant.findUnique({ where: { id: tenantId } });
-      expect(refreshed?.slug).toBe(candidate);
+      expect(status).toBe(200);
+      expect(body.slug).toBe("chosen-club");
+      expect(prismaMock.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT },
+        data: { slug: "chosen-club" },
+        select: { slug: true },
+      });
+      expect(logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "onboarding.slug.updated",
+          tenantId: TENANT,
+          meta: { previousSlug: onboardingTenant.slug, newSlug: "chosen-club" },
+        }),
+      );
     });
 
     test("rejects a reserved slug", async () => {
-      const res = await PATCH(patchReq({ slug: "api" }));
-      expect(res.status).toBe(400);
+      const { status } = await setSlug("api");
+
+      expect(status).toBe(400);
+      expect(prismaMock.tenant.update).not.toHaveBeenCalled();
     });
 
     test("rejects a slug already taken by another tenant", async () => {
-      const other = await prisma.tenant.findUnique({ where: { id: otherTenantId } });
-      const res = await PATCH(patchReq({ slug: other!.slug }));
-      expect(res.status).toBe(409);
+      const { status } = await setSlug(OTHER_TENANT_SLUG);
+
+      expect(status).toBe(409);
+      expect(prismaMock.tenant.update).not.toHaveBeenCalled();
     });
 
     test("rejects invalid format", async () => {
-      const res = await PATCH(patchReq({ slug: "BAD!" }));
-      expect(res.status).toBe(400);
+      const { status } = await setSlug("BAD!");
+
+      expect(status).toBe(400);
+      expect(prismaMock.tenant.update).not.toHaveBeenCalled();
     });
 
     test("is locked once tenant has gone live", async () => {
-      mockSessionReturn = adminSession(liveTenantId, liveAdminId);
-      const res = await PATCH(patchReq({ slug: `attempted-${Date.now()}` }));
-      expect(res.status).toBe(409);
-      const body = await res.json();
+      signInAs({ id: "live-admin", role: "TENANT_ADMIN", tenantId: liveTenant.id });
+
+      const { status, body } = await setSlug("attempted-club");
+
+      expect(status).toBe(409);
       expect(body.error).toMatch(/locked/i);
+      expect(prismaMock.tenant.update).not.toHaveBeenCalled();
     });
   });
 });

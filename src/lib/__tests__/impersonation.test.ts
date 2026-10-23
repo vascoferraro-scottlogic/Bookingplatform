@@ -1,210 +1,119 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
-
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { jsonRequest, request, readJson } from "@/test-utils/http";
+import type { ActingAsClaim } from "@/lib/roles";
 import { GET, POST, DELETE } from "@/app/api/platform/impersonation/route";
 
-let tenantId: string;
-let inactiveTenantId: string;
-let platformAdminId: string;
-let regularUserId: string;
+const PLATFORM_ADMIN_ID = "platform-admin";
+const TENANT = { id: "tenant-1", name: "Impersonation Test Club", slug: "imp-test", active: true, status: "ACTIVE" };
+const SUSPENDED_TENANT = { id: "tenant-2", name: "Inactive Club", slug: "imp-inactive", active: false, status: "SUSPENDED" };
 
-function platformSession(actingAs: any = null) {
-  return {
-    session: {
-      user: {
-        id: platformAdminId,
-        email: "platform@test.com",
-        name: "Platform Admin",
-        role: "PLATFORM_ADMIN",
-        tenantId: null,
-        actingAs,
-      },
-    },
-  };
-}
+const signInAsPlatformAdmin = (actingAs: ActingAsClaim | null = null) =>
+  signInAs({ id: PLATFORM_ADMIN_ID, role: "PLATFORM_ADMIN", tenantId: null, actingAs });
+const signInAsRegularUser = () => signInAs({ id: "regular-user", role: "USER", tenantId: TENANT.id });
 
-function regularSession() {
-  return {
-    session: {
-      user: {
-        id: regularUserId,
-        email: "user@test.com",
-        name: "Regular",
-        role: "USER",
-        tenantId,
-        actingAs: null,
-      },
-    },
-  };
-}
+const start = (body: Record<string, unknown>) => POST(jsonRequest("POST", "/api/platform/impersonation", body));
 
-function jsonRequest(body: Record<string, unknown>): NextRequest {
-  return new NextRequest("http://localhost/api/platform/impersonation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-// logAudit is fire-and-forget; poll briefly until rows appear (or timeout).
-async function waitForAudit(
-  where: Record<string, unknown>,
-  expected = 1,
-  timeoutMs = 1000,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const count = await prisma.auditEvent.count({ where });
-    if (count >= expected) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
-
-beforeAll(async () => {
-  const slug = "imp-test-" + Date.now();
-  const tenant = await prisma.tenant.create({
-    data: { name: "Impersonation Test Club", slug, active: true },
-  });
-  tenantId = tenant.id;
-
-  const inactive = await prisma.tenant.create({
-    data: { name: "Inactive Club", slug: slug + "-inactive", active: false, status: "SUSPENDED" },
-  });
-  inactiveTenantId = inactive.id;
-
-  const admin = await prisma.user.create({
-    data: {
-      email: `imp-admin-${Date.now()}@test.com`,
-      name: "Platform Admin",
-      passwordHash: "x",
-      role: "PLATFORM_ADMIN",
-      tenantId: null,
-    },
-  });
-  platformAdminId = admin.id;
-
-  const user = await prisma.user.create({
-    data: {
-      email: `imp-user-${Date.now()}@test.com`,
-      name: "Regular",
-      passwordHash: "x",
-      role: "USER",
-      tenantId,
-    },
-  });
-  regularUserId = user.id;
+beforeEach(() => {
+  prismaMock.tenant.findUnique.mockImplementation((async ({ where }: any) =>
+    [TENANT, SUSPENDED_TENANT].find((t) => t.id === where.id) ?? null) as never);
+  prismaMock.impersonation.create.mockImplementation((async ({ data }: any) => ({
+    id: "imp-1",
+    startedAt: new Date(),
+    endedAt: null,
+    ...data,
+  })) as never);
+  prismaMock.auditEvent.create.mockResolvedValue({} as never);
 });
 
-afterAll(async () => {
-  await prisma.auditEvent.deleteMany({
-    where: { OR: [{ actorId: platformAdminId }, { tenantId }, { tenantId: inactiveTenantId }] },
-  });
-  await prisma.impersonation.deleteMany({ where: { platformUserId: platformAdminId } });
-  await prisma.user.deleteMany({ where: { id: { in: [platformAdminId, regularUserId] } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: [tenantId, inactiveTenantId] } } });
-  await prisma.$disconnect();
-});
-
-afterEach(async () => {
-  // Clean up any open impersonations between tests
-  await prisma.impersonation.deleteMany({ where: { platformUserId: platformAdminId } });
-  await prisma.auditEvent.deleteMany({ where: { actorId: platformAdminId } });
-});
+function auditCalls(action: string) {
+  return prismaMock.auditEvent.create.mock.calls
+    .map(([arg]) => (arg as any).data)
+    .filter((d) => d.action === action);
+}
 
 // ── POST ──────────────────────────────────────────────────
 
 describe("POST /api/platform/impersonation", () => {
   test("returns 403 when caller is not PLATFORM_ADMIN", async () => {
-    mockSessionReturn = regularSession();
-    const res = await POST(jsonRequest({ tenantId }));
+    signInAsRegularUser();
+    const res = await start({ tenantId: TENANT.id });
     expect(res.status).toBe(403);
+    expect(prismaMock.impersonation.create).not.toHaveBeenCalled();
   });
 
   test("returns 400 when tenantId missing", async () => {
-    mockSessionReturn = platformSession();
-    const res = await POST(jsonRequest({}));
+    signInAsPlatformAdmin();
+    const res = await start({});
     expect(res.status).toBe(400);
+    expect(prismaMock.impersonation.create).not.toHaveBeenCalled();
   });
 
   test("returns 404 when tenant does not exist", async () => {
-    mockSessionReturn = platformSession();
-    const res = await POST(jsonRequest({ tenantId: "no-such-tenant" }));
+    signInAsPlatformAdmin();
+    const res = await start({ tenantId: "no-such-tenant" });
     expect(res.status).toBe(404);
+    expect(prismaMock.impersonation.create).not.toHaveBeenCalled();
   });
 
   test("returns 400 when tenant is SUSPENDED", async () => {
-    mockSessionReturn = platformSession();
-    const res = await POST(jsonRequest({ tenantId: inactiveTenantId }));
+    signInAsPlatformAdmin();
+    const res = await start({ tenantId: SUSPENDED_TENANT.id });
     expect(res.status).toBe(400);
+    expect(prismaMock.impersonation.create).not.toHaveBeenCalled();
   });
 
   test("creates Impersonation row and returns actingAs claim", async () => {
-    mockSessionReturn = platformSession();
-    const res = await POST(jsonRequest({ tenantId, reason: "Investigating booking issue" }));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    signInAsPlatformAdmin();
+    const { status, body } = await readJson(await start({ tenantId: TENANT.id, reason: "Investigating booking issue" }));
+    expect(status).toBe(200);
     expect(body.actingAs).toMatchObject({
-      tenantId,
+      tenantId: TENANT.id,
       role: "TENANT_ADMIN",
     });
-    expect(body.actingAs.impersonationId).toBeTruthy();
+    expect(body.actingAs.impersonationId).toBe("imp-1");
     expect(body.actingAs.tenantName).toBe("Impersonation Test Club");
 
-    const row = await prisma.impersonation.findUnique({
-      where: { id: body.actingAs.impersonationId },
+    expect(prismaMock.impersonation.create).toHaveBeenCalledWith({
+      data: {
+        platformUserId: PLATFORM_ADMIN_ID,
+        tenantId: TENANT.id,
+        assumedRole: "TENANT_ADMIN",
+        reason: "Investigating booking issue",
+      },
     });
-    expect(row).not.toBeNull();
-    expect(row!.platformUserId).toBe(platformAdminId);
-    expect(row!.tenantId).toBe(tenantId);
-    expect(row!.assumedRole).toBe("TENANT_ADMIN");
-    expect(row!.endedAt).toBeNull();
-    expect(row!.reason).toBe("Investigating booking issue");
   });
 
   test("writes a platform.impersonation.start audit event", async () => {
-    mockSessionReturn = platformSession();
-    const res = await POST(jsonRequest({ tenantId }));
-    const body = await res.json();
-    await waitForAudit({ actorId: platformAdminId, action: "platform.impersonation.start" });
-    const audits = await prisma.auditEvent.findMany({
-      where: { actorId: platformAdminId, action: "platform.impersonation.start" },
-    });
-    expect(audits.length).toBe(1);
+    signInAsPlatformAdmin();
+    const { body } = await readJson(await start({ tenantId: TENANT.id }));
+
+    const audits = auditCalls("platform.impersonation.start");
+    expect(audits).toHaveLength(1);
+    expect(audits[0].actorId).toBe(PLATFORM_ADMIN_ID);
     expect(audits[0].entityId).toBe(body.actingAs.impersonationId);
-    expect(audits[0].tenantId).toBe(tenantId);
+    expect(audits[0].tenantId).toBe(TENANT.id);
   });
 
-  test("starting a second impersonation ends the prior one", async () => {
-    mockSessionReturn = platformSession();
-    const first = await POST(jsonRequest({ tenantId }));
-    const firstBody = await first.json();
-    const firstId = firstBody.actingAs.impersonationId;
+  test("starting an impersonation ends the caller's prior open ones first", async () => {
+    signInAsPlatformAdmin();
+    await start({ tenantId: TENANT.id });
 
-    const second = await POST(jsonRequest({ tenantId }));
-    const secondBody = await second.json();
-    const secondId = secondBody.actingAs.impersonationId;
-
-    expect(secondId).not.toBe(firstId);
-
-    const firstRow = await prisma.impersonation.findUnique({ where: { id: firstId } });
-    const secondRow = await prisma.impersonation.findUnique({ where: { id: secondId } });
-    expect(firstRow!.endedAt).not.toBeNull();
-    expect(secondRow!.endedAt).toBeNull();
+    expect(prismaMock.impersonation.updateMany).toHaveBeenCalledWith({
+      where: { platformUserId: PLATFORM_ADMIN_ID, endedAt: null },
+      data: { endedAt: expect.any(Date) },
+    });
+    const endedOrder = prismaMock.impersonation.updateMany.mock.invocationCallOrder[0];
+    const createdOrder = prismaMock.impersonation.create.mock.invocationCallOrder[0];
+    expect(endedOrder).toBeLessThan(createdOrder);
   });
 
   test("returns 400 on invalid JSON body", async () => {
-    mockSessionReturn = platformSession();
-    const req = new NextRequest("http://localhost/api/platform/impersonation", {
+    signInAsPlatformAdmin();
+    const req = request("/api/platform/impersonation", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{not json",
@@ -217,42 +126,43 @@ describe("POST /api/platform/impersonation", () => {
 // ── DELETE ────────────────────────────────────────────────
 
 describe("DELETE /api/platform/impersonation", () => {
+  const claim: ActingAsClaim = {
+    tenantId: TENANT.id,
+    tenantName: TENANT.name,
+    tenantSlug: TENANT.slug,
+    role: "TENANT_ADMIN",
+    impersonationId: "imp-1",
+    startedAt: new Date().toISOString(),
+  };
+
   test("returns 403 for non-platform-admin", async () => {
-    mockSessionReturn = regularSession();
+    signInAsRegularUser();
     const res = await DELETE();
     expect(res.status).toBe(403);
   });
 
   test("returns ended:false when no active impersonation", async () => {
-    mockSessionReturn = platformSession(null);
-    const res = await DELETE();
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    signInAsPlatformAdmin(null);
+    const { status, body } = await readJson(await DELETE());
+    expect(status).toBe(200);
     expect(body).toEqual({ ended: false });
+    expect(prismaMock.impersonation.updateMany).not.toHaveBeenCalled();
   });
 
   test("stamps endedAt and writes an end-audit when impersonating", async () => {
-    // Start one first
-    mockSessionReturn = platformSession();
-    const startRes = await POST(jsonRequest({ tenantId }));
-    const startBody = await startRes.json();
-    const claim = startBody.actingAs;
+    signInAsPlatformAdmin(claim);
+    const { status, body } = await readJson(await DELETE());
+    expect(status).toBe(200);
+    expect(body).toEqual({ ended: true });
 
-    // Now end it
-    mockSessionReturn = platformSession(claim);
-    const endRes = await DELETE();
-    expect(endRes.status).toBe(200);
-    const endBody = await endRes.json();
-    expect(endBody).toEqual({ ended: true });
-
-    const row = await prisma.impersonation.findUnique({ where: { id: claim.impersonationId } });
-    expect(row!.endedAt).not.toBeNull();
-
-    await waitForAudit({ actorId: platformAdminId, action: "platform.impersonation.end" });
-    const endAudits = await prisma.auditEvent.findMany({
-      where: { actorId: platformAdminId, action: "platform.impersonation.end" },
+    expect(prismaMock.impersonation.updateMany).toHaveBeenCalledWith({
+      where: { id: claim.impersonationId, platformUserId: PLATFORM_ADMIN_ID, endedAt: null },
+      data: { endedAt: expect.any(Date) },
     });
-    expect(endAudits.length).toBe(1);
+
+    const endAudits = auditCalls("platform.impersonation.end");
+    expect(endAudits).toHaveLength(1);
+    expect(endAudits[0].actorId).toBe(PLATFORM_ADMIN_ID);
     expect(endAudits[0].entityId).toBe(claim.impersonationId);
   });
 });
@@ -261,32 +171,30 @@ describe("DELETE /api/platform/impersonation", () => {
 
 describe("GET /api/platform/impersonation", () => {
   test("returns 403 for non-platform-admin", async () => {
-    mockSessionReturn = regularSession();
+    signInAsRegularUser();
     const res = await GET();
     expect(res.status).toBe(403);
   });
 
   test("returns active:null when no claim on session", async () => {
-    mockSessionReturn = platformSession(null);
-    const res = await GET();
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    signInAsPlatformAdmin(null);
+    const { status, body } = await readJson(await GET());
+    expect(status).toBe(200);
     expect(body).toEqual({ active: null });
   });
 
   test("returns the actingAs claim when present", async () => {
-    const claim = {
-      tenantId,
+    const claim: ActingAsClaim = {
+      tenantId: TENANT.id,
       tenantName: "X",
       tenantSlug: "x",
       role: "TENANT_ADMIN",
       impersonationId: "imp-xyz",
       startedAt: new Date().toISOString(),
     };
-    mockSessionReturn = platformSession(claim);
-    const res = await GET();
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    signInAsPlatformAdmin(claim);
+    const { status, body } = await readJson(await GET());
+    expect(status).toBe(200);
     expect(body.active).toEqual(claim);
   });
 });

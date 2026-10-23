@@ -1,124 +1,73 @@
 /**
  * Tests for the No-Show ML integration path:
- *   1. ml-client — HTTP client error and timeout handling (pure unit tests)
+ *   1. ml-client — MlServiceError shape (pure unit tests)
  *   2. NoShowRiskAgent — proposal emission and graceful ML service failure
  *   3. booking-noshow-reminder committer — OutboundMessage creation on approve
  */
-
-import { prisma } from "@/lib/prisma";
-import { AgentRunStatus, BookingStatus } from "@prisma/client";
-import { MlServiceError } from "@/lib/agent/ml-client";
-import {
-  applyProposal,
-  _resetCommittersForTest,
-} from "@/lib/agent/committers";
-
-// ── Module mocks ──────────────────────────────────────────────────────────────
-
-// Mock the ml-client so tests don't need a running Python service.
-// Individual tests override `mockPredictReturn` to control behaviour.
-let mockPredictReturn: { probability: number; modelVersion: string } | null = null;
-let mockPredictShouldThrow: boolean = false;
-let mockPredictError: Error = new MlServiceError("service unavailable", 503);
-
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+// No real LLM (the no-show agent does not call one, but BaseAgent resolves it).
+jest.mock("@/lib/agent/providers", () => ({ getProvider: () => ({ name: "stub", call: jest.fn() }) }));
+// Mock the ml-client so tests don't need a running Python service. The real
+// MlServiceError is kept so the error-shape tests exercise production code.
 jest.mock("@/lib/agent/ml-client", () => ({
-  predictNoShow: jest.fn(async () => {
-    if (mockPredictShouldThrow) throw mockPredictError;
-    return mockPredictReturn;
-  }),
-  MlServiceError: class MlServiceError extends Error {
-    status?: number;
-    constructor(message: string, status?: number) {
-      super(message);
-      this.name = "MlServiceError";
-      this.status = status;
-    }
-  },
+  predictNoShow: jest.fn(),
+  MlServiceError: jest.requireActual("@/lib/agent/ml-client").MlServiceError,
 }));
 
-// Import after mock registration
+import { AgentAction, AgentProposalAudience, AgentProposalStatus, AgentRunStatus } from "@prisma/client";
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { isoDateFromToday } from "@/test-utils/dates";
+import { MlServiceError, predictNoShow } from "@/lib/agent/ml-client";
+import { applyProposal } from "@/lib/agent/committers";
+// Registers the BOOKING_NOSHOW_REMINDER committer.
+import "@/lib/agent/committers/booking-noshow-reminder";
 import { NoShowRiskAgent } from "@/lib/agent/agents/no-show";
+
+const predictMock = jest.mocked(predictNoShow);
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
-let tenantId: string;
-let userId: string;
-let rinkId: string;
-let agentDefinitionId: string;
-let agentSystemUserId: string;
+const tenantId = "tenant-1";
+const userId = "user-1";
+// Stands in for the seeded "no-show" AgentDefinition.
+const NO_SHOW = { id: "agent-noshow", slug: "no-show", name: "No-Show Risk Predictor", systemUserId: "sys-noshow" };
 
-beforeAll(async () => {
-  const tenant = await prisma.tenant.create({
-    data: { name: "NoShow Test Club", slug: `noshow-test-${Date.now()}` },
-  });
-  tenantId = tenant.id;
+let bookingSeq = 0;
+let bookings: Array<Record<string, unknown>> = [];
 
-  const user = await prisma.user.create({
-    data: {
-      email: `noshow-user-${Date.now()}@test.com`,
-      name: "Test Member",
-      passwordHash: "x",
-      role: "USER",
-      tenantId,
-    },
+/** Queue an upcoming CONFIRMED booking for booking.findMany; returns its id. */
+function createUpcomingBooking(daysAhead = 5): string {
+  const id = `booking-${++bookingSeq}`;
+  bookings.push({
+    id,
+    tenantId,
+    userId,
+    date: isoDateFromToday(daysAhead),
+    status: "CONFIRMED",
+    createdAt: new Date(),
+    user: { createdAt: new Date(Date.now() - 365 * 24 * 3_600_000) },
+    slots: [{ timeSlot: "14:00", rink: { green: { allWeather: false } } }],
   });
-  userId = user.id;
-
-  const green = await prisma.green.create({
-    data: { tenantId, name: "Test Green", allWeather: false },
-  });
-  const rink = await prisma.rink.create({ data: { greenId: green.id, name: "Rink 1" } });
-  rinkId = rink.id;
-
-  // Agent definition — mirrors what prisma/seed.ts creates for the "no-show" slug
-  const systemUser = await prisma.user.create({
-    data: {
-      email: `noshow-agent-${Date.now()}@agent.system`,
-      name: "No-Show Test Agent",
-      passwordHash: "x",
-      role: "PLATFORM_ADMIN",
-    },
-  });
-  agentSystemUserId = systemUser.id;
-
-  const agentDef = await prisma.agentDefinition.upsert({
-    where: { slug: "no-show" },
-    update: { systemUserId: systemUser.id },
-    create: {
-      slug: "no-show",
-      name: "No-Show Risk Predictor",
-      description: "test",
-      systemUserId: systemUser.id,
-    },
-  });
-  agentDefinitionId = agentDef.id;
-});
-
-afterAll(async () => {
-  await prisma.outboundMessage.deleteMany({ where: { tenantId } });
-  await prisma.agentProposal.deleteMany({ where: { agentId: agentDefinitionId } });
-  await prisma.agentDecision.deleteMany({ where: { agentId: agentDefinitionId } });
-  await prisma.agentRun.deleteMany({ where: { agentId: agentDefinitionId } });
-  await prisma.agentConfig.deleteMany({ where: { agentId: agentDefinitionId } });
-  await prisma.bookingNoShowPrediction.deleteMany({ where: { tenantId } });
-  await prisma.bookingPayment.deleteMany({ where: { booking: { tenantId } } });
-  await prisma.bookingSlot.deleteMany({ where: { booking: { tenantId } } });
-  await prisma.booking.deleteMany({ where: { tenantId } });
-  await prisma.rink.deleteMany({ where: { green: { tenantId } } });
-  await prisma.green.deleteMany({ where: { tenantId } });
-  await prisma.agentDefinition.deleteMany({ where: { id: agentDefinitionId } });
-  await prisma.user.deleteMany({
-    where: { id: { in: [userId, agentSystemUserId] } },
-  });
-  await prisma.tenant.delete({ where: { id: tenantId } });
-  await prisma.$disconnect();
-});
+  return id;
+}
 
 beforeEach(() => {
-  _resetCommittersForTest();
-  mockPredictReturn = { probability: 0.55, modelVersion: "noshow-v1" };
-  mockPredictShouldThrow = false;
+  bookings = [];
+  predictMock.mockReset();
+  predictMock.mockResolvedValue({ probability: 0.55, modelVersion: "noshow-v1" });
+
+  prismaMock.agentDefinition.findUnique.mockResolvedValue(NO_SHOW as never);
+  prismaMock.agentRun.create.mockImplementation((async ({ data }: any) => ({ id: "run-1", ...data })) as never);
+  prismaMock.agentRun.update.mockImplementation((async ({ where, data }: any) => ({ id: where.id, ...data })) as never);
+  prismaMock.agentConfig.findUnique.mockResolvedValue(null);
+  prismaMock.booking.findMany.mockImplementation((async () => bookings) as never);
+  (prismaMock.booking.groupBy as jest.Mock).mockResolvedValue([]);
+  prismaMock.agentProposal.create.mockImplementation((async ({ data }: any) => ({ id: "proposal-1", ...data })) as never);
+  prismaMock.agentDecision.create.mockImplementation((async ({ data }: any) => ({ id: "decision-1", ...data })) as never);
 });
+
+const proposals = () => prismaMock.agentProposal.create.mock.calls.map((c) => (c[0] as any).data);
+const decisions = () => prismaMock.agentDecision.create.mock.calls.map((c) => (c[0] as any).data);
 
 // ── ml-client unit tests ──────────────────────────────────────────────────────
 
@@ -138,108 +87,88 @@ describe("MlServiceError", () => {
 
 // ── NoShowRiskAgent ───────────────────────────────────────────────────────────
 
-async function createUpcomingBooking(daysAhead = 5): Promise<string> {
-  const d = new Date();
-  d.setDate(d.getDate() + daysAhead);
-  const dateStr = d.toISOString().slice(0, 10);
-
-  const booking = await prisma.booking.create({
-    data: {
-      tenantId,
-      userId,
-      date: dateStr,
-      status: "CONFIRMED",
-      slots: {
-        create: { rinkId, timeSlot: "14:00", greenName: "Test Green" },
-      },
-    },
-    select: { id: true },
-  });
-  return booking.id;
-}
-
 describe("NoShowRiskAgent — proposal emission", () => {
   test("emits a proposal for a high-risk booking (probability >= 0.4 default threshold)", async () => {
-    mockPredictReturn = { probability: 0.7, modelVersion: "noshow-v1" };
-    const bookingId = await createUpcomingBooking(3);
+    predictMock.mockResolvedValue({ probability: 0.7, modelVersion: "noshow-v1" });
+    const bookingId = createUpcomingBooking(3);
 
-    const agent = new NoShowRiskAgent();
-    const run = await agent.runForTenant(tenantId);
+    const run = await new NoShowRiskAgent().runForTenant(tenantId);
 
     expect(run.status).toBe(AgentRunStatus.COMPLETED);
+    // Only this tenant's upcoming confirmed/reserved bookings are scored.
+    expect(prismaMock.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId,
+          status: { in: ["CONFIRMED", "RESERVED"] },
+          date: expect.objectContaining({ gte: isoDateFromToday(0) }),
+        }),
+      }),
+    );
 
-    const proposals = await prisma.agentProposal.findMany({
-      where: { agentId: agentDefinitionId, tenantId },
-    });
-    expect(proposals.length).toBeGreaterThan(0);
-    const p = proposals.find((pr) => {
-      const payload = JSON.parse(pr.payload);
-      return payload.bookingId === bookingId;
-    });
-    expect(p).toBeDefined();
-    expect(p!.confidence).toBeCloseTo(0.7, 2);
-    expect(p!.kind).toBe("BOOKING_NOSHOW_REMINDER");
+    const emitted = proposals();
+    expect(emitted).toHaveLength(1);
+    const p = emitted[0];
+    expect(JSON.parse(p.payload)).toMatchObject({ bookingId, userId, probability: 0.7, source: "high_risk" });
+    expect(p.agentId).toBe(NO_SHOW.id);
+    expect(p.tenantId).toBe(tenantId);
+    expect(p.confidence).toBeCloseTo(0.7, 2);
+    expect(p.kind).toBe("BOOKING_NOSHOW_REMINDER");
   });
 
   test("does not emit proposal below risk threshold", async () => {
-    mockPredictReturn = { probability: 0.15, modelVersion: "noshow-v1" };
-    await createUpcomingBooking(7);
+    predictMock.mockResolvedValue({ probability: 0.15, modelVersion: "noshow-v1" });
+    createUpcomingBooking(7);
 
-    const agent = new NoShowRiskAgent();
-    await agent.runForTenant(tenantId);
+    await new NoShowRiskAgent().runForTenant(tenantId);
 
-    // All proposals for this tenant — any at confidence 0.15 should not exist
-    const proposals = await prisma.agentProposal.findMany({
-      where: { agentId: agentDefinitionId, tenantId, confidence: { lt: 0.4 } },
-    });
-    expect(proposals.length).toBe(0);
+    expect(prismaMock.agentProposal.create).not.toHaveBeenCalled();
   });
 
   test("records AgentDecision for every booking, regardless of threshold", async () => {
-    mockPredictReturn = { probability: 0.1, modelVersion: "noshow-v1" };
-    await createUpcomingBooking(10);
+    predictMock.mockResolvedValue({ probability: 0.1, modelVersion: "noshow-v1" });
+    const bookingId = createUpcomingBooking(10);
 
-    const before = await prisma.agentDecision.count({
-      where: { agentId: agentDefinitionId },
-    });
-    const agent = new NoShowRiskAgent();
-    await agent.runForTenant(tenantId);
-    const after = await prisma.agentDecision.count({
-      where: { agentId: agentDefinitionId },
-    });
+    await new NoShowRiskAgent().runForTenant(tenantId);
 
-    // At least one decision recorded for each agent run that processes bookings
-    expect(after).toBeGreaterThan(before);
+    expect(decisions()).toEqual([
+      expect.objectContaining({
+        agentId: NO_SHOW.id,
+        tenantId,
+        action: AgentAction.NO_ACTION,
+        confidence: 0.1,
+        sourceMessageId: bookingId,
+      }),
+    ]);
   });
 });
 
 describe("NoShowRiskAgent — ML service failure", () => {
   test("records NO_ACTION decision and does not crash when ML service is down", async () => {
-    mockPredictShouldThrow = true;
-    mockPredictError = new MlServiceError("connection refused", 503);
-    await createUpcomingBooking(4);
+    predictMock.mockRejectedValue(new MlServiceError("connection refused", 503));
+    const bookingId = createUpcomingBooking(4);
 
-    const agent = new NoShowRiskAgent();
-    const run = await agent.runForTenant(tenantId);
+    const run = await new NoShowRiskAgent().runForTenant(tenantId);
 
     // Agent should complete (not fail) even when ML is unreachable
     expect(run.status).toBe(AgentRunStatus.COMPLETED);
+    expect(decisions()).toEqual([
+      expect.objectContaining({
+        action: AgentAction.NO_ACTION,
+        confidence: 0,
+        sourceMessageId: bookingId,
+        reasoning: expect.stringContaining("connection refused (503)"),
+      }),
+    ]);
   });
 
   test("does not emit proposals when ML service is unavailable", async () => {
-    mockPredictShouldThrow = true;
-    const before = await prisma.agentProposal.count({
-      where: { agentId: agentDefinitionId, tenantId },
-    });
-    await createUpcomingBooking(6);
+    predictMock.mockRejectedValue(new MlServiceError("service unavailable", 503));
+    createUpcomingBooking(6);
 
-    const agent = new NoShowRiskAgent();
-    await agent.runForTenant(tenantId);
+    await new NoShowRiskAgent().runForTenant(tenantId);
 
-    const after = await prisma.agentProposal.count({
-      where: { agentId: agentDefinitionId, tenantId },
-    });
-    expect(after).toBe(before); // no new proposals
+    expect(prismaMock.agentProposal.create).not.toHaveBeenCalled();
   });
 });
 
@@ -248,54 +177,48 @@ describe("NoShowRiskAgent — ML service failure", () => {
 describe("NoShowRiskAgent — prediction persistence", () => {
   test("persists a BookingNoShowPrediction for every successfully scored booking", async () => {
     const version = "noshow-persist-test-v1";
-    mockPredictReturn = { probability: 0.35, modelVersion: version };
+    predictMock.mockResolvedValue({ probability: 0.35, modelVersion: version });
+    const bookingId = createUpcomingBooking(8);
 
-    const bookingId = await createUpcomingBooking(8);
+    const run = await new NoShowRiskAgent().runForTenant(tenantId);
 
-    const agent = new NoShowRiskAgent();
-    const run = await agent.runForTenant(tenantId);
     expect(run.status).toBe(AgentRunStatus.COMPLETED);
-
-    const pred = await prisma.bookingNoShowPrediction.findUnique({
-      where: { bookingId_modelVersion: { bookingId, modelVersion: version } },
-    });
-    expect(pred).not.toBeNull();
-    expect(pred!.probability).toBeCloseTo(0.35, 3);
-    expect(pred!.tenantId).toBe(tenantId);
+    expect(prismaMock.bookingNoShowPrediction.upsert).toHaveBeenCalledTimes(1);
+    expect(prismaMock.bookingNoShowPrediction.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId_modelVersion: { bookingId, modelVersion: version } },
+        create: { bookingId, tenantId, modelVersion: version, probability: 0.35 },
+      }),
+    );
   });
 
   test("does not persist a prediction when ML service fails", async () => {
-    mockPredictShouldThrow = true;
-    mockPredictError = new MlServiceError("connection refused", 503);
-    const version = "noshow-persist-error-test-v1";
-    mockPredictReturn = { probability: 0.5, modelVersion: version };
+    predictMock.mockRejectedValue(new MlServiceError("connection refused", 503));
+    createUpcomingBooking(9);
 
-    const bookingId = await createUpcomingBooking(9);
-    const agent = new NoShowRiskAgent();
-    await agent.runForTenant(tenantId);
+    await new NoShowRiskAgent().runForTenant(tenantId);
 
-    const pred = await prisma.bookingNoShowPrediction.findUnique({
-      where: { bookingId_modelVersion: { bookingId, modelVersion: version } },
-    });
-    expect(pred).toBeNull();
+    expect(prismaMock.bookingNoShowPrediction.upsert).not.toHaveBeenCalled();
   });
 
   test("upserts on re-score — updates probability, does not duplicate", async () => {
     const version = "noshow-upsert-test-v1";
-    const bookingId = await createUpcomingBooking(11);
-
-    mockPredictReturn = { probability: 0.4, modelVersion: version };
+    const bookingId = createUpcomingBooking(11);
     const agent = new NoShowRiskAgent();
+
+    predictMock.mockResolvedValue({ probability: 0.4, modelVersion: version });
+    await agent.runForTenant(tenantId);
+    predictMock.mockResolvedValue({ probability: 0.55, modelVersion: version });
     await agent.runForTenant(tenantId);
 
-    mockPredictReturn = { probability: 0.55, modelVersion: version };
-    await agent.runForTenant(tenantId);
-
-    const preds = await prisma.bookingNoShowPrediction.findMany({
-      where: { bookingId, modelVersion: version },
-    });
-    expect(preds).toHaveLength(1);
-    expect(preds[0].probability).toBeCloseTo(0.55, 3);
+    // Both runs upsert on the same (bookingId, modelVersion) key; none inserts.
+    const calls = prismaMock.bookingNoShowPrediction.upsert.mock.calls.map((c) => c[0] as any);
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.where).toEqual({ bookingId_modelVersion: { bookingId, modelVersion: version } });
+    }
+    expect(calls[1].update).toEqual(expect.objectContaining({ probability: 0.55 }));
+    expect(prismaMock.bookingNoShowPrediction.create).not.toHaveBeenCalled();
   });
 });
 
@@ -303,60 +226,52 @@ describe("NoShowRiskAgent — prediction persistence", () => {
 
 describe("booking-noshow-reminder committer", () => {
   test("creates an OutboundMessage reminder when proposal is approved", async () => {
-    // Register committer via side-effect import
-    require("@/lib/agent/committers/booking-noshow-reminder");
-
-    // Create a booking to attach the proposal to
-    const d = new Date();
-    d.setDate(d.getDate() + 14);
-    const dateStr = d.toISOString().slice(0, 10);
-    const booking = await prisma.booking.create({
-      data: {
-        tenantId,
+    const bookingDate = isoDateFromToday(14);
+    const bookingId = "booking-reminder";
+    const proposal = {
+      id: "proposal-reminder",
+      agentId: NO_SHOW.id,
+      runId: "run-1",
+      kind: "BOOKING_NOSHOW_REMINDER",
+      payload: JSON.stringify({
+        bookingId,
         userId,
-        date: dateStr,
-        status: "CONFIRMED",
-        slots: { create: { rinkId, timeSlot: "10:00", greenName: "Test Green" } },
-      },
-    });
-
-    // Create a run + proposal directly (bypasses agent process())
-    const run = await prisma.agentRun.create({
-      data: { agentId: agentDefinitionId, tenantId, status: "RUNNING" },
-    });
-    const proposal = await prisma.agentProposal.create({
-      data: {
-        agentId: agentDefinitionId,
-        runId: run.id,
-        kind: "BOOKING_NOSHOW_REMINDER",
-        payload: JSON.stringify({
-          bookingId: booking.id,
-          userId,
-          bookingDate: dateStr,
-          probability: 0.62,
-          modelVersion: "noshow-v1",
-          source: "high_risk",
-        }),
-        confidence: 0.62,
-        reasoning: "test",
-        audienceScope: "TENANT",
-        tenantId,
-      },
-    });
+        bookingDate,
+        probability: 0.62,
+        modelVersion: "noshow-v1",
+        source: "high_risk",
+      }),
+      confidence: 0.62,
+      reasoning: "test",
+      audienceScope: AgentProposalAudience.TENANT,
+      tenantId,
+      targetTenantId: null,
+      status: AgentProposalStatus.PENDING,
+    };
+    prismaMock.agentProposal.findUnique.mockResolvedValue(proposal as never);
+    prismaMock.agentProposal.update.mockImplementation((async ({ data }: any) => ({ ...proposal, ...data })) as never);
+    prismaMock.booking.findUnique.mockResolvedValue({
+      id: bookingId,
+      tenantId,
+      userId,
+      date: bookingDate,
+      user: { email: "member@example.test", name: "Test Member" },
+    } as never);
+    prismaMock.outboundMessage.create.mockImplementation((async ({ data }: any) => ({ id: "outbound-1", ...data })) as never);
 
     const approverId = userId; // any user id works for the commit
     const result = await applyProposal({ proposalId: proposal.id, approverId });
 
     expect(result.committedEntityType).toBe("OutboundMessage");
-    expect(result.committedEntityId).toBeTruthy();
+    expect(result.committedEntityId).toBe("outbound-1");
+    expect(prismaMock.booking.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: bookingId } }));
 
-    const msg = await prisma.outboundMessage.findUnique({
-      where: { id: result.committedEntityId! },
-    });
-    expect(msg).not.toBeNull();
-    expect(msg!.channel).toBe("EMAIL");
-    expect(msg!.status).toBe("STUBBED");
-    expect(msg!.relatedEntity).toBe("Booking");
-    expect(msg!.relatedEntityId).toBe(booking.id);
+    const msg = (prismaMock.outboundMessage.create.mock.calls[0][0] as any).data;
+    expect(msg.channel).toBe("EMAIL");
+    expect(msg.status).toBe("STUBBED");
+    expect(msg.toAddress).toBe("member@example.test");
+    expect(msg.tenantId).toBe(tenantId);
+    expect(msg.relatedEntity).toBe("Booking");
+    expect(msg.relatedEntityId).toBe(bookingId);
   });
 });

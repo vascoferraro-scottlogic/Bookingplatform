@@ -1,103 +1,94 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
 
-// Import the route handler
+import bcrypt from "bcryptjs";
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { jsonRequest, readJson } from "@/test-utils/http";
 import { POST } from "@/app/api/auth/register/route";
 
-let tenantId: string;
-let tenantSlug: string;
-const createdUserIds: string[] = [];
+const register = (body: Record<string, unknown>) => POST(jsonRequest("POST", "/api/auth/register", body));
 
-beforeAll(async () => {
-  tenantSlug = "reg-test-" + Date.now();
-  const tenant = await prisma.tenant.create({
-    data: { name: "Register Test Club", slug: tenantSlug, active: true },
-  });
-  tenantId = tenant.id;
+beforeEach(() => {
+  // user.create echoes the selected fields of what it was given.
+  prismaMock.user.create.mockImplementation((async ({ data }: any) => ({
+    id: "new-user",
+    email: data.email,
+    name: data.name ?? null,
+    role: data.role,
+    tenantId: data.tenantId,
+  })) as never);
 });
-
-afterAll(async () => {
-  if (createdUserIds.length) {
-    await prisma.auditEvent.deleteMany({ where: { actorId: { in: createdUserIds } } });
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
-  }
-  // Also clean up any users created with our test tenant that we might have missed
-  await prisma.auditEvent.deleteMany({ where: { tenantId } });
-  await prisma.user.deleteMany({ where: { tenantId } });
-  await prisma.tenant.delete({ where: { id: tenantId } });
-  await prisma.$disconnect();
-});
-
-function makeRequest(body: Record<string, unknown>): NextRequest {
-  return new NextRequest("http://localhost/api/auth/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
 
 describe("POST /api/auth/register", () => {
   test("registers a new user with email and password", async () => {
-    const email = `reg-success-${Date.now()}@test.com`;
-    const res = await POST(makeRequest({ email, password: "Pass1234" }));
-    expect(res.status).toBe(201);
+    const { status, body } = await readJson(await register({ email: "new@test.com", password: "Pass1234" }));
 
-    const body = await res.json();
-    expect(body.email).toBe(email);
-    expect(body.role).toBe("USER");
-    expect(body.tenantId).toBeNull();
-    createdUserIds.push(body.id);
+    expect(status).toBe(201);
+    expect(body).toEqual({ id: "new-user", email: "new@test.com", name: null, role: "USER", tenantId: null });
+  });
+
+  test("stores a bcrypt hash, never the plain password", async () => {
+    await register({ email: "new@test.com", password: "Pass1234" });
+
+    const data = (prismaMock.user.create.mock.calls[0][0] as any).data;
+    expect(data.passwordHash).not.toBe("Pass1234");
+    await expect(bcrypt.compare("Pass1234", data.passwordHash)).resolves.toBe(true);
   });
 
   test("registers user with name", async () => {
-    const email = `reg-name-${Date.now()}@test.com`;
-    const res = await POST(makeRequest({ email, password: "Pass1234", name: "John" }));
-    expect(res.status).toBe(201);
+    const { status, body } = await readJson(
+      await register({ email: "new@test.com", password: "Pass1234", name: "John" }),
+    );
 
-    const body = await res.json();
+    expect(status).toBe(201);
     expect(body.name).toBe("John");
-    createdUserIds.push(body.id);
   });
 
   test("returns 400 when email is missing", async () => {
-    const res = await POST(makeRequest({ password: "Pass1234" }));
-    expect(res.status).toBe(400);
-    const body = await res.json();
+    const { status, body } = await readJson(await register({ password: "Pass1234" }));
+
+    expect(status).toBe(400);
     expect(body.error).toContain("Email and password required");
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
   test("returns 400 when password is missing", async () => {
-    const res = await POST(makeRequest({ email: "test@test.com" }));
-    expect(res.status).toBe(400);
+    const { status } = await readJson(await register({ email: "test@test.com" }));
+
+    expect(status).toBe(400);
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
   test("returns 409 for duplicate email", async () => {
-    const email = `reg-dup-${Date.now()}@test.com`;
-    const first = await POST(makeRequest({ email, password: "Pass1234" }));
-    const firstBody = await first.json();
-    createdUserIds.push(firstBody.id);
+    prismaMock.user.findUnique.mockResolvedValue({ id: "existing" } as never);
 
-    const second = await POST(makeRequest({ email, password: "Pass5678" }));
-    expect(second.status).toBe(409);
-    const body = await second.json();
+    const { status, body } = await readJson(await register({ email: "dup@test.com", password: "Pass5678" }));
+
+    expect(status).toBe(409);
     expect(body.error).toContain("already registered");
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
   test("links user to tenant when valid tenantSlug provided", async () => {
-    const email = `reg-tenant-${Date.now()}@test.com`;
-    const res = await POST(makeRequest({ email, password: "Pass1234", tenantSlug }));
-    expect(res.status).toBe(201);
+    prismaMock.tenant.findFirst.mockResolvedValue({ id: "tenant-1" } as never);
 
-    const body = await res.json();
-    expect(body.tenantId).toBe(tenantId);
-    createdUserIds.push(body.id);
+    const { status, body } = await readJson(
+      await register({ email: "new@test.com", password: "Pass1234", tenantSlug: "lakeview" }),
+    );
+
+    expect(status).toBe(201);
+    expect(body.tenantId).toBe("tenant-1");
+    expect(prismaMock.tenant.findFirst).toHaveBeenCalledWith({ where: { slug: "lakeview", active: true } });
   });
 
   test("returns 404 for invalid tenantSlug", async () => {
-    const email = `reg-badslug-${Date.now()}@test.com`;
-    const res = await POST(makeRequest({ email, password: "Pass1234", tenantSlug: "nonexistent-slug" }));
-    expect(res.status).toBe(404);
-    const body = await res.json();
+    prismaMock.tenant.findFirst.mockResolvedValue(null);
+
+    const { status, body } = await readJson(
+      await register({ email: "new@test.com", password: "Pass1234", tenantSlug: "nonexistent-slug" }),
+    );
+
+    expect(status).toBe(404);
     expect(body.error).toContain("Club not found");
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 });

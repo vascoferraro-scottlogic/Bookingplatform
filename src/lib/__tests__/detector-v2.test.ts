@@ -16,102 +16,78 @@
  *    decision so we keep the learning signal.
  *  - Cursor advances even when no proposals emitted.
  */
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+// No real LLM: each test swaps in a fake provider after construction.
+jest.mock("@/lib/agent/providers", () => ({ getProvider: () => ({ name: "stub", call: jest.fn() }) }));
 
-import { prisma } from "@/lib/prisma";
 import {
   AgentAction,
   AgentProposalStatus,
   ChannelType,
 } from "@prisma/client";
+import { prismaMock } from "@/test-utils/prisma-mock";
 import { DetectionAgent } from "@/lib/agent/agents/detector";
 import { MAINTENANCE_TASK_CREATE_KIND } from "@/lib/agent/committers/maintenance-task-create";
 import "@/lib/agent/committers/register-all";
 
-let tenantId: string;
-let agentSystemUserId: string;
-let memberId: string;
-let channelId: string;
-let agentId: string;
+const tenantId = "tenant-1";
+const channelId = "channel-1";
+const memberId = "member-1";
+const memberB = "member-2";
+const memberC = "member-3";
+// Stands in for the seeded "detector" AgentDefinition.
+const DETECTOR = { id: "agent-detector", slug: "detector", name: "Detection Agent", systemUserId: "sys-detector" };
 
-beforeAll(async () => {
-  const tenant = await prisma.tenant.create({
-    data: { name: "Detector Test Club", slug: "det-test-" + Date.now() },
-  });
-  tenantId = tenant.id;
+let messageSeq = 0;
+let messages: Array<Record<string, unknown>> = [];
 
-  // Use the existing seeded "detector" AgentDefinition rather than creating
-  // one — its systemUser is shared with other tests / dev data, and replacing
-  // the systemUserId via upsert would orphan FK references at teardown.
-  const def = await prisma.agentDefinition.findUnique({ where: { slug: "detector" } });
-  if (!def) {
-    throw new Error(
-      `Seeded AgentDefinition for slug "detector" missing — run \`npx prisma db seed\``,
-    );
-  }
-  agentId = def.id;
-  agentSystemUserId = def.systemUserId;
-
-  const member = await prisma.user.create({
-    data: {
-      email: `det-mem-${Date.now()}@test.com`,
-      name: "Member",
-      passwordHash: "x",
-      role: "USER",
-      tenantId,
-    },
-  });
-  memberId = member.id;
-
-  const channel = await prisma.channel.create({
-    data: {
-      tenantId,
-      name: "general-" + Date.now(),
-      type: ChannelType.PUBLIC,
-      createdById: memberId,
-    },
-  });
-  channelId = channel.id;
-});
-
-afterAll(async () => {
-  await new Promise((r) => setTimeout(r, 200));
-  // Only tear down what this test created. Leave the seeded detector
-  // AgentDefinition + its systemUser alone (shared with the dev/seed setup).
-  await prisma.taskNote.deleteMany({ where: { task: { tenantId } } });
-  await prisma.maintenanceTask.deleteMany({ where: { tenantId } });
-  await prisma.agentDecision.deleteMany({ where: { tenantId } });
-  await prisma.agentProposal.deleteMany({ where: { tenantId } });
-  await prisma.agentRun.deleteMany({ where: { tenantId } });
-  await prisma.agentMemory.deleteMany({ where: { tenantId } });
-  await prisma.agentConfig.deleteMany({ where: { tenantId } });
-  await prisma.message.deleteMany({ where: { tenantId } });
-  await prisma.channel.deleteMany({ where: { tenantId } });
-  await prisma.user.deleteMany({ where: { id: memberId } });
-  await prisma.tenant.delete({ where: { id: tenantId } });
-  await prisma.$disconnect();
-});
-
-beforeEach(async () => {
-  // Wipe per-tenant agent state but keep fixtures.
-  await prisma.taskNote.deleteMany({ where: { task: { tenantId } } });
-  await prisma.maintenanceTask.deleteMany({ where: { tenantId } });
-  await prisma.agentDecision.deleteMany({ where: { tenantId } });
-  await prisma.agentProposal.deleteMany({ where: { tenantId } });
-  await prisma.agentRun.deleteMany({ where: { tenantId } });
-  await prisma.agentMemory.deleteMany({ where: { tenantId } });
-  await prisma.message.deleteMany({ where: { tenantId } });
-});
-
-async function seedMessages(bodies: string[]): Promise<string[]> {
-  const ids: string[] = [];
-  for (const body of bodies) {
-    const m = await prisma.message.create({
-      data: { tenantId, channelId, userId: memberId, body },
-    });
-    ids.push(m.id);
-  }
-  return ids;
+/** Queue messages for message.findMany, oldest first, a minute apart. */
+function seedMessages(bodies: string[], userId = memberId): string[] {
+  return bodies.map((body) => seedFromUser(userId, body));
 }
+
+function seedFromUser(userId: string, body: string): string {
+  const id = `msg-${++messageSeq}`;
+  messages.push({
+    id,
+    tenantId,
+    channelId,
+    userId,
+    body,
+    pinned: false,
+    deletedAt: null,
+    createdAt: new Date(Date.now() - (30 - messages.length) * 60_000),
+    updatedAt: new Date(),
+    user: { name: userId, email: `${userId}@example.test` },
+    channel: { name: "general", type: ChannelType.PUBLIC },
+  });
+  return id;
+}
+
+beforeEach(() => {
+  messages = [];
+  let proposalSeq = 0;
+  let decisionSeq = 0;
+  prismaMock.agentDefinition.findUnique.mockResolvedValue(DETECTOR as never);
+  prismaMock.agentRun.create.mockImplementation((async ({ data }: any) => ({ id: "run-1", ...data })) as never);
+  prismaMock.agentRun.update.mockImplementation((async ({ where, data }: any) => ({ id: where.id, ...data })) as never);
+  prismaMock.agentConfig.findUnique.mockResolvedValue(null);
+  prismaMock.agentMemory.findUnique.mockResolvedValue(null);
+  prismaMock.message.findMany.mockImplementation((async () => messages) as never);
+  prismaMock.tenant.findUnique.mockResolvedValue({ name: "Detector Test Club", latitude: null, longitude: null } as never);
+  prismaMock.agentKnowledge.findMany.mockResolvedValue([]);
+  prismaMock.agentProposal.create.mockImplementation((async ({ data }: any) => ({
+    id: `proposal-${++proposalSeq}`,
+    status: AgentProposalStatus.PENDING,
+    ...data,
+  })) as never);
+  prismaMock.agentDecision.create.mockImplementation((async ({ data }: any) => ({ id: `decision-${++decisionSeq}`, ...data })) as never);
+});
+
+const proposals = () => prismaMock.agentProposal.create.mock.calls.map((c) => (c[0] as any).data);
+const decisions = () => prismaMock.agentDecision.create.mock.calls.map((c) => (c[0] as any).data);
+const proposalIds = () =>
+  Promise.all(prismaMock.agentProposal.create.mock.results.map((r) => r.value)).then((rows) => rows.map((p: any) => p.id));
 
 /** Build a fake provider that returns a fixed classification for given message ids. */
 function makeFakeProvider(classifications: Array<{
@@ -138,16 +114,21 @@ function makeFakeProvider(classifications: Array<{
   };
 }
 
+function agentWith(provider: ReturnType<typeof makeFakeProvider>) {
+  const agent = new DetectionAgent();
+  (agent as unknown as { provider: unknown }).provider = provider;
+  return agent;
+}
+
 describe("DetectionAgent v2 — propose-not-publish", () => {
   test("emits one MAINTENANCE_TASK_CREATE proposal per eligible complaint and creates NO MaintenanceTask", async () => {
-    const [m1, m2, m3] = await seedMessages([
+    const [m1, m2, m3] = seedMessages([
       "Rink 2 is really uneven near the head, hard to bowl",
       "Anyone fancy a coffee?",
       "Sprinkler is stuck on green 3 and has been all morning",
     ]);
 
-    const agent = new DetectionAgent();
-    (agent as unknown as { provider: unknown }).provider = makeFakeProvider([
+    const agent = agentWith(makeFakeProvider([
       { messageId: m1, isComplaint: true, category: "RINK_SURFACE", priority: "MEDIUM",
         suggestedTitle: "Rink 2 surface uneven", suggestedDescription: "Members report bumps",
         confidence: 0.8, reasoning: "Clear complaint" },
@@ -155,24 +136,30 @@ describe("DetectionAgent v2 — propose-not-publish", () => {
       { messageId: m3, isComplaint: true, category: "GROUNDS", priority: "HIGH",
         suggestedTitle: "Sprinkler stuck on green 3", suggestedDescription: "Stuck running",
         confidence: 0.9, reasoning: "Equipment issue" },
-    ]);
+    ]));
 
     const run = await agent.runForTenant(tenantId);
     expect(run.status).toBe("COMPLETED");
 
+    // Messages are read for this tenant only, excluding the agent's own posts.
+    expect(prismaMock.message.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ tenantId, userId: { not: DETECTOR.systemUserId } }),
+      }),
+    );
+
     // No tasks created directly
-    const tasks = await prisma.maintenanceTask.findMany({ where: { tenantId } });
-    expect(tasks).toHaveLength(0);
+    expect(prismaMock.maintenanceTask.create).not.toHaveBeenCalled();
+    expect(prismaMock.maintenanceTask.update).not.toHaveBeenCalled();
 
     // Two proposals emitted, one per eligible complaint
-    const proposals = await prisma.agentProposal.findMany({
-      where: { tenantId, kind: MAINTENANCE_TASK_CREATE_KIND },
-      orderBy: { createdAt: "asc" },
-    });
-    expect(proposals).toHaveLength(2);
-    expect(proposals.every((p) => p.status === AgentProposalStatus.PENDING)).toBe(true);
+    const emitted = proposals();
+    expect(emitted).toHaveLength(2);
+    expect(emitted.every((p) => p.kind === MAINTENANCE_TASK_CREATE_KIND && p.tenantId === tenantId)).toBe(true);
+    // emitProposal does not set status, so the schema default (PENDING) applies.
+    expect(emitted.every((p) => !("status" in p))).toBe(true);
 
-    const payloads = proposals.map((p) => JSON.parse(p.payload));
+    const payloads = emitted.map((p) => JSON.parse(p.payload));
     expect(payloads[0]).toMatchObject({
       title: "Rink 2 surface uneven",
       category: "RINK_SURFACE",
@@ -188,35 +175,32 @@ describe("DetectionAgent v2 — propose-not-publish", () => {
     });
 
     // Decisions reference the proposals + carry sourceMessageId
-    const decisions = await prisma.agentDecision.findMany({
-      where: { tenantId },
-      orderBy: { createdAt: "asc" },
-    });
-    expect(decisions).toHaveLength(2);
-    expect(decisions[0].proposalId).toBe(proposals[0].id);
-    expect(decisions[0].sourceMessageId).toBe(m1);
-    expect(decisions[1].proposalId).toBe(proposals[1].id);
-    expect(decisions[1].sourceMessageId).toBe(m3);
+    const ids = await proposalIds();
+    const recorded = decisions();
+    expect(recorded).toHaveLength(2);
+    expect(recorded[0].proposalId).toBe(ids[0]);
+    expect(recorded[0].sourceMessageId).toBe(m1);
+    expect(recorded[0].tenantId).toBe(tenantId);
+    expect(recorded[1].proposalId).toBe(ids[1]);
+    expect(recorded[1].sourceMessageId).toBe(m3);
   });
 
   test("filters out below-threshold complaints", async () => {
-    const [m1] = await seedMessages([
+    const [m1] = seedMessages([
       "Maybe the rink is a bit slow today, not sure",
     ]);
 
-    const agent = new DetectionAgent();
-    (agent as unknown as { provider: unknown }).provider = makeFakeProvider([
+    const agent = agentWith(makeFakeProvider([
       { messageId: m1, isComplaint: true, category: "RINK_SURFACE", priority: "LOW",
         confidence: 0.3 }, // below default 0.6 threshold
-    ]);
+    ]));
 
     await agent.runForTenant(tenantId);
-    const proposals = await prisma.agentProposal.findMany({ where: { tenantId } });
-    expect(proposals).toHaveLength(0);
+    expect(prismaMock.agentProposal.create).not.toHaveBeenCalled();
   });
 
   test("respects maxTasksPerRun cap; over-cap complaints get NO_ACTION decision", async () => {
-    const ids = await seedMessages([
+    const ids = seedMessages([
       "Issue A on rink 1",
       "Issue B in clubhouse",
       "Issue C in pavilion",
@@ -227,21 +211,14 @@ describe("DetectionAgent v2 — propose-not-publish", () => {
     ]);
 
     // Lower the cap via AgentConfig
-    await prisma.agentConfig.upsert({
-      where: { agentId_tenantId: { agentId, tenantId } },
-      create: {
-        agentId, tenantId,
-        config: JSON.stringify({ maxTasksPerRun: 3, sensitivityThreshold: 0.5 }),
-        enabled: true,
-      },
-      update: {
-        config: JSON.stringify({ maxTasksPerRun: 3, sensitivityThreshold: 0.5 }),
-        enabled: true,
-      },
-    });
+    prismaMock.agentConfig.findUnique.mockResolvedValue({
+      agentId: DETECTOR.id,
+      tenantId,
+      config: JSON.stringify({ maxTasksPerRun: 3, sensitivityThreshold: 0.5 }),
+      enabled: true,
+    } as never);
 
-    const agent = new DetectionAgent();
-    (agent as unknown as { provider: unknown }).provider = makeFakeProvider(
+    const agent = agentWith(makeFakeProvider(
       ids.map((id, i) => ({
         messageId: id,
         isComplaint: true,
@@ -251,77 +228,49 @@ describe("DetectionAgent v2 — propose-not-publish", () => {
         suggestedDescription: `desc ${i}`,
         confidence: 0.8,
       })),
-    );
+    ));
 
     await agent.runForTenant(tenantId);
 
-    const proposals = await prisma.agentProposal.findMany({ where: { tenantId } });
-    expect(proposals).toHaveLength(3); // capped
-
-    const noActionDecisions = await prisma.agentDecision.findMany({
-      where: { tenantId, action: AgentAction.NO_ACTION, proposalId: null },
+    expect(prismaMock.agentConfig.findUnique).toHaveBeenCalledWith({
+      where: { agentId_tenantId: { agentId: DETECTOR.id, tenantId } },
     });
-    expect(noActionDecisions.length).toBe(ids.length - 3); // remainder logged
+    expect(proposals()).toHaveLength(3); // capped
 
-    // cleanup config so next test gets defaults
-    await prisma.agentConfig.deleteMany({ where: { agentId, tenantId } });
+    const noActionDecisions = decisions().filter(
+      (d) => d.action === AgentAction.NO_ACTION && d.proposalId === undefined,
+    );
+    expect(noActionDecisions.length).toBe(ids.length - 3); // remainder logged
   });
 
   test("advances cursor even when no complaints flagged", async () => {
-    const [m1] = await seedMessages(["Hello world chitchat"]);
+    const [m1] = seedMessages(["Hello world chitchat"]);
 
-    const agent = new DetectionAgent();
-    (agent as unknown as { provider: unknown }).provider = makeFakeProvider([
+    const agent = agentWith(makeFakeProvider([
       { messageId: m1, isComplaint: false, confidence: 0.95 },
-    ]);
+    ]));
 
     await agent.runForTenant(tenantId);
 
-    const memory = await prisma.agentMemory.findUnique({
-      where: { agentId_tenantId_key: { agentId, tenantId, key: "last_processed_at" } },
-    });
-    expect(memory).not.toBeNull();
+    expect(prismaMock.agentProposal.create).not.toHaveBeenCalled();
+    expect(prismaMock.agentMemory.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { agentId_tenantId_key: { agentId: DETECTOR.id, tenantId, key: "last_processed_at" } },
+        create: expect.objectContaining({
+          value: JSON.stringify({ lastProcessedAt: (messages[0].createdAt as Date).toISOString() }),
+        }),
+      }),
+    );
   });
 });
 
 describe("DetectionAgent v2 — clustering (3c-iii)", () => {
-  let memberB: string;
-  let memberC: string;
-
-  beforeAll(async () => {
-    const b = await prisma.user.create({
-      data: { email: `det-memB-${Date.now()}@test.com`, name: "MemB", passwordHash: "x", role: "USER", tenantId },
-    });
-    memberB = b.id;
-    const c = await prisma.user.create({
-      data: { email: `det-memC-${Date.now()}@test.com`, name: "MemC", passwordHash: "x", role: "USER", tenantId },
-    });
-    memberC = c.id;
-  });
-
-  afterAll(async () => {
-    // Inner block teardown runs BEFORE outer afterAll. Delete cluster
-    // messages first so the user delete doesn't trip the FK.
-    await prisma.agentDecision.deleteMany({ where: { tenantId } });
-    await prisma.agentProposal.deleteMany({ where: { tenantId } });
-    await prisma.message.deleteMany({ where: { tenantId, userId: { in: [memberB, memberC] } } });
-    await prisma.user.deleteMany({ where: { id: { in: [memberB, memberC] } } });
-  });
-
-  async function seedFromUser(userId: string, body: string): Promise<string> {
-    const m = await prisma.message.create({
-      data: { tenantId, channelId, userId, body },
-    });
-    return m.id;
-  }
-
   test("merges similar messages from multiple authors into ONE proposal with participantCount=N", async () => {
-    const m1 = await seedFromUser(memberId, "Rink 3 surface uneven near south end");
-    const m2 = await seedFromUser(memberB, "Rink 3 surface uneven and bumpy");
-    const m3 = await seedFromUser(memberC, "Yeah rink 3 surface really uneven today");
+    const m1 = seedFromUser(memberId, "Rink 3 surface uneven near south end");
+    const m2 = seedFromUser(memberB, "Rink 3 surface uneven and bumpy");
+    const m3 = seedFromUser(memberC, "Yeah rink 3 surface really uneven today");
 
-    const agent = new DetectionAgent();
-    (agent as unknown as { provider: unknown }).provider = makeFakeProvider([
+    const agent = agentWith(makeFakeProvider([
       { messageId: m1, isComplaint: true, category: "RINK_SURFACE", priority: "MEDIUM",
         suggestedTitle: "Rink 3 surface uneven", suggestedDescription: "Multiple reports",
         confidence: 0.7, toneSeverity: 0.5, toneLabel: "concerned" },
@@ -331,16 +280,14 @@ describe("DetectionAgent v2 — clustering (3c-iii)", () => {
       { messageId: m3, isComplaint: true, category: "RINK_SURFACE", priority: "MEDIUM",
         suggestedTitle: "Rink 3 uneven again", suggestedDescription: "x",
         confidence: 0.75, toneSeverity: 0.4 },
-    ]);
+    ]));
 
     await agent.runForTenant(tenantId);
 
-    const proposals = await prisma.agentProposal.findMany({
-      where: { tenantId, kind: MAINTENANCE_TASK_CREATE_KIND },
-    });
-    expect(proposals).toHaveLength(1);
+    const emitted = proposals();
+    expect(emitted).toHaveLength(1);
 
-    const payload = JSON.parse(proposals[0].payload);
+    const payload = JSON.parse(emitted[0].payload);
     expect(payload.title).toBe("Rink 3 uneven"); // canonical = highest confidence
     expect(payload.participantCount).toBe(3);
     expect(payload.sourceMessageIds).toEqual(expect.arrayContaining([m1, m2, m3]));
@@ -348,61 +295,51 @@ describe("DetectionAgent v2 — clustering (3c-iii)", () => {
     expect(payload.toneLabel).toBe("frustrated"); // label of max-severity voice
 
     // 3 decisions, all referencing the same proposal
-    const decisions = await prisma.agentDecision.findMany({
-      where: { tenantId, proposalId: proposals[0].id },
-    });
-    expect(decisions).toHaveLength(3);
+    const [proposalId] = await proposalIds();
+    expect(decisions().filter((d) => d.proposalId === proposalId)).toHaveLength(3);
   });
 
   test("unrelated complaints do NOT cluster — one proposal each", async () => {
-    const m1 = await seedFromUser(memberId, "Sprinkler on green 1 stuck running");
-    const m2 = await seedFromUser(memberB, "Net torn on rink 4");
+    const m1 = seedFromUser(memberId, "Sprinkler on green 1 stuck running");
+    const m2 = seedFromUser(memberB, "Net torn on rink 4");
 
-    const agent = new DetectionAgent();
-    (agent as unknown as { provider: unknown }).provider = makeFakeProvider([
+    const agent = agentWith(makeFakeProvider([
       { messageId: m1, isComplaint: true, category: "GROUNDS", priority: "MEDIUM",
         suggestedTitle: "Sprinkler stuck", suggestedDescription: "x", confidence: 0.8 },
       { messageId: m2, isComplaint: true, category: "EQUIPMENT", priority: "MEDIUM",
         suggestedTitle: "Net torn rink 4", suggestedDescription: "x", confidence: 0.8 },
-    ]);
+    ]));
 
     await agent.runForTenant(tenantId);
-    const proposals = await prisma.agentProposal.findMany({
-      where: { tenantId, kind: MAINTENANCE_TASK_CREATE_KIND },
-    });
-    expect(proposals).toHaveLength(2);
+    expect(proposals()).toHaveLength(2);
   });
 
   test("cluster with mix of complaint + non-complaint emits proposal covering all cluster members", async () => {
-    const m1 = await seedFromUser(memberId, "Heating broken clubhouse lounge");
-    const m2 = await seedFromUser(memberB, "Heating broken clubhouse lounge yes");
+    seedFromUser(memberId, "Heating broken clubhouse lounge");
+    seedFromUser(memberB, "Heating broken clubhouse lounge yes");
     // m3 has strong topical overlap → SAME cluster — but LLM disagrees on
     // whether it's a complaint. Cluster membership is topical, not
     // classification-based; participantCount counts all cluster authors.
-    const m3 = await seedFromUser(memberC, "Heating broken clubhouse lounge actually fine now");
+    seedFromUser(memberC, "Heating broken clubhouse lounge actually fine now");
+    const [m1, m2, m3] = messages.map((m) => m.id as string);
 
-    const agent = new DetectionAgent();
-    (agent as unknown as { provider: unknown }).provider = makeFakeProvider([
+    const agent = agentWith(makeFakeProvider([
       { messageId: m1, isComplaint: true, category: "FACILITIES", priority: "MEDIUM",
         suggestedTitle: "Heating broken clubhouse", suggestedDescription: "x", confidence: 0.85 },
       { messageId: m2, isComplaint: true, category: "FACILITIES", priority: "MEDIUM",
         suggestedTitle: "Heating broken", suggestedDescription: "x", confidence: 0.75 },
       { messageId: m3, isComplaint: false, confidence: 0.9 },
-    ]);
+    ]));
 
     await agent.runForTenant(tenantId);
-    const proposals = await prisma.agentProposal.findMany({
-      where: { tenantId, kind: MAINTENANCE_TASK_CREATE_KIND },
-    });
-    expect(proposals).toHaveLength(1);
-    const payload = JSON.parse(proposals[0].payload);
+    const emitted = proposals();
+    expect(emitted).toHaveLength(1);
+    const payload = JSON.parse(emitted[0].payload);
     // participantCount counts distinct authors of cluster members
     expect(payload.participantCount).toBe(3);
     expect(payload.sourceMessageIds).toHaveLength(3);
     // Only the 2 complaint members get decision rows linked to this proposal
-    const decisions = await prisma.agentDecision.findMany({
-      where: { tenantId, proposalId: proposals[0].id },
-    });
-    expect(decisions).toHaveLength(2);
+    const [proposalId] = await proposalIds();
+    expect(decisions().filter((d) => d.proposalId === proposalId)).toHaveLength(2);
   });
 });

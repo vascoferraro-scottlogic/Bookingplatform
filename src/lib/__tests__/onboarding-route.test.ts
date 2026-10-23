@@ -1,181 +1,154 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
+jest.mock("@/lib/audit", () => ({ logAudit: jest.fn() }));
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
-
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs, signOut } from "@/test-utils/session";
+import { jsonRequest, readJson, request } from "@/test-utils/http";
+import { logAudit } from "@/lib/audit";
 import { GET, POST } from "@/app/api/onboarding/progress/route";
 
-let tenantId: string;
-let tenantAdminId: string;
-const cleanup: { tenantIds: string[]; userIds: string[] } = { tenantIds: [], userIds: [] };
+const TENANT = "t1";
 
-function tenantAdminSession() {
+const getProgress = async () => readJson(await GET(request("/api/onboarding/progress")));
+const postProgress = async (body: Record<string, unknown>) =>
+  readJson(await POST(jsonRequest("POST", "/api/onboarding/progress", body)));
+
+function progressRow(overrides: Record<string, unknown> = {}) {
   return {
-    session: {
-      user: {
-        id: tenantAdminId,
-        email: "ob-admin@test.com",
-        name: "OB Admin",
-        role: "TENANT_ADMIN",
-        tenantId,
-        actingAs: null,
-      },
-    },
+    id: "p1",
+    tenantId: TENANT,
+    currentChapter: 1,
+    completedChapters: "[]",
+    completedAt: null,
+    lastAnswerAt: null,
+    schemaVersion: 2,
+    ...overrides,
   };
 }
 
-function postReq(body: Record<string, unknown>) {
-  return new NextRequest("http://localhost/api/onboarding/progress", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-beforeAll(async () => {
-  const stamp = Date.now();
-  const tenant = await prisma.tenant.create({
-    data: { name: "OB Test Club", slug: `ob-test-${stamp}`, status: "ONBOARDING", active: false },
-  });
-  tenantId = tenant.id;
-  cleanup.tenantIds.push(tenant.id);
-
-  const admin = await prisma.user.create({
-    data: {
-      email: `ob-admin-${stamp}@test.com`,
-      name: "OB Admin",
-      passwordHash: "x",
-      role: "TENANT_ADMIN",
-      tenantId,
-    },
-  });
-  tenantAdminId = admin.id;
-  cleanup.userIds.push(admin.id);
-});
-
-afterAll(async () => {
-  // Order matters: clear FK dependents before parents.
-  // AuditEvent.actorId references User. Filtering AuditEvent by tenantId
-  // alone leaves rows where this test's user was actor on OTHER tenants
-  // (accumulated from prior runs), which then FK-blocks the user delete
-  // and strands the tenant rows. Hence two AuditEvent passes: by actor
-  // first, by tenant second.
-  try {
-    await prisma.onboardingProgress.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-    await prisma.userInvitation.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-    await prisma.membership.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-    await prisma.auditEvent.deleteMany({ where: { actorId: { in: cleanup.userIds } } });
-    await prisma.auditEvent.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-    await prisma.user.updateMany({ where: { tenantId: { in: cleanup.tenantIds } }, data: { tenantId: null } });
-    await prisma.user.deleteMany({ where: { id: { in: cleanup.userIds } } });
-    await prisma.tenant.deleteMany({ where: { id: { in: cleanup.tenantIds } } });
-  } finally {
-    await prisma.$disconnect();
-  }
+beforeEach(() => {
+  jest.mocked(logAudit).mockClear();
+  signInAs({ id: "admin-1", role: "TENANT_ADMIN", tenantId: TENANT });
+  // create / update / upsert echo the row they were asked to write.
+  prismaMock.onboardingProgress.create.mockImplementation((async ({ data }: any) => progressRow(data)) as never);
+  prismaMock.onboardingProgress.update.mockImplementation((async ({ data }: any) => progressRow(data)) as never);
+  prismaMock.onboardingProgress.upsert.mockImplementation((async ({ update }: any) => progressRow(update)) as never);
 });
 
 describe("/api/onboarding/progress", () => {
-  beforeEach(() => {
-    mockSessionReturn = tenantAdminSession();
-  });
-
   test("GET creates a progress row on first call", async () => {
-    await prisma.onboardingProgress.deleteMany({ where: { tenantId } });
-    const res = await GET(new NextRequest("http://localhost/api/onboarding/progress"));
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.tenantId).toBe(tenantId);
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(null);
+
+    const { status, body } = await getProgress();
+
+    expect(status).toBe(200);
+    expect(body.tenantId).toBe(TENANT);
     expect(body.currentChapter).toBe(1);
     expect(body.completedChapters).toEqual([]);
     expect(body.isComplete).toBe(false);
     expect(body.totalChapters).toBe(10);
+    expect(prismaMock.onboardingProgress.findUnique).toHaveBeenCalledWith({ where: { tenantId: TENANT } });
+    expect(prismaMock.onboardingProgress.create).toHaveBeenCalledWith({
+      data: { tenantId: TENANT, currentChapter: 1, completedChapters: "[]" },
+    });
   });
 
   test("POST advances current chapter and marks complete", async () => {
-    await prisma.onboardingProgress.deleteMany({ where: { tenantId } });
-    // Pre-create so POST upserts a known state
-    await prisma.onboardingProgress.create({ data: { tenantId, currentChapter: 1, completedChapters: "[]" } });
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(progressRow() as never);
 
-    const res = await POST(postReq({ chapter: 1, markComplete: true }));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    const { status, body } = await postProgress({ chapter: 1, markComplete: true });
+
+    expect(status).toBe(200);
     expect(body.completedChapters).toEqual([1]);
     expect(body.currentChapter).toBe(1);
     expect(body.isComplete).toBe(false);
     expect(body.lastAnswerAt).toBeTruthy();
+    expect(prismaMock.onboardingProgress.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: TENANT },
+        update: expect.objectContaining({ currentChapter: 1, completedChapters: "[1]" }),
+      }),
+    );
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "onboarding.chapter.completed", tenantId: TENANT, meta: { chapter: 1 } }),
+    );
   });
 
   test("POST does NOT auto-set completedAt when all chapters done (go-live is the explicit completion event)", async () => {
-    await prisma.onboardingProgress.deleteMany({ where: { tenantId } });
-    await prisma.onboardingProgress.create({
-      data: { tenantId, currentChapter: 9, completedChapters: JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8, 9]) },
-    });
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(
+      progressRow({ currentChapter: 9, completedChapters: JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8, 9]) }) as never,
+    );
 
-    const res = await POST(postReq({ chapter: 10, markComplete: true }));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    const { status, body } = await postProgress({ chapter: 10, markComplete: true });
+
+    expect(status).toBe(200);
     expect(body.completedChapters).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(body.isComplete).toBe(false);
     expect(body.completedAt).toBeNull();
+    expect(prismaMock.onboardingProgress.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ completedAt: null }) }),
+    );
   });
 
-  test("POST validates chapter range", async () => {
-    const tooHigh = await POST(postReq({ chapter: 99 }));
-    expect(tooHigh.status).toBe(400);
-    const tooLow = await POST(postReq({ chapter: 0 }));
-    expect(tooLow.status).toBe(400);
+  test.each([99, 0])("POST rejects out-of-range chapter %p with 400", async (chapter) => {
+    const { status } = await postProgress({ chapter });
+
+    expect(status).toBe(400);
+    expect(prismaMock.onboardingProgress.upsert).not.toHaveBeenCalled();
   });
 
   test("rejects unauthenticated callers", async () => {
-    mockSessionReturn = { error: new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }) };
-    const res = await GET(new NextRequest("http://localhost/api/onboarding/progress"));
-    expect(res.status).toBe(401);
+    signOut();
+
+    const { status } = await getProgress();
+
+    expect(status).toBe(401);
+    expect(prismaMock.onboardingProgress.findUnique).not.toHaveBeenCalled();
   });
 
   test("rejects USER role", async () => {
-    mockSessionReturn = {
-      session: {
-        user: { id: "x", email: "u@u.com", role: "USER", tenantId, actingAs: null },
-      },
-    };
-    const res = await POST(postReq({ chapter: 1 }));
-    expect(res.status).toBe(403);
+    signInAs({ id: "x", role: "USER", tenantId: TENANT });
+
+    const { status } = await postProgress({ chapter: 1 });
+
+    expect(status).toBe(403);
+    expect(prismaMock.onboardingProgress.upsert).not.toHaveBeenCalled();
   });
 
   test("GET migrates v1 progress: chapters >= 2 shift up by 1, schemaVersion bumped", async () => {
-    // Simulate a tenant who started onboarding under the old 9-chapter shape.
-    await prisma.onboardingProgress.deleteMany({ where: { tenantId } });
-    await prisma.onboardingProgress.create({
-      data: {
-        tenantId,
-        currentChapter: 4,
-        completedChapters: JSON.stringify([1, 2, 3]),
-        schemaVersion: 1,
-      },
-    });
+    // A tenant who started onboarding under the old 9-chapter shape.
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(
+      progressRow({ currentChapter: 4, completedChapters: JSON.stringify([1, 2, 3]), schemaVersion: 1 }) as never,
+    );
 
-    const res = await GET(new NextRequest("http://localhost/api/onboarding/progress"));
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    const { status, body } = await getProgress();
+
+    expect(status).toBe(200);
     // 1 stays; 2,3 shift to 3,4; current 4 -> 5.
     expect(body.completedChapters).toEqual([1, 3, 4]);
     expect(body.currentChapter).toBe(5);
+    expect(prismaMock.onboardingProgress.update).toHaveBeenCalledWith({
+      where: { tenantId: TENANT },
+      data: { schemaVersion: 2, currentChapter: 5, completedChapters: "[1,3,4]" },
+    });
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "onboarding.progress.migrated", meta: { from: 1, to: 2 } }),
+    );
+  });
 
-    // Idempotent: a second GET must not shift again.
-    const res2 = await GET(new NextRequest("http://localhost/api/onboarding/progress"));
-    const body2 = await res2.json();
-    expect(body2.completedChapters).toEqual([1, 3, 4]);
-    expect(body2.currentChapter).toBe(5);
+  test("GET does not re-migrate a v2 row (migration is idempotent)", async () => {
+    // The row as the migration above left it.
+    prismaMock.onboardingProgress.findUnique.mockResolvedValue(
+      progressRow({ currentChapter: 5, completedChapters: "[1,3,4]", schemaVersion: 2 }) as never,
+    );
 
-    const row = await prisma.onboardingProgress.findUnique({ where: { tenantId } });
-    expect(row?.schemaVersion).toBe(2);
+    const { status, body } = await getProgress();
+
+    expect(status).toBe(200);
+    expect(body.completedChapters).toEqual([1, 3, 4]);
+    expect(body.currentChapter).toBe(5);
+    expect(prismaMock.onboardingProgress.update).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalled();
   });
 });

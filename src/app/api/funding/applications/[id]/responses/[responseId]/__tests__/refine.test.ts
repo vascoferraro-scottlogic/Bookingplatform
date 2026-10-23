@@ -1,241 +1,170 @@
 /**
- * Integration test for the per-response refine endpoint.
+ * Unit test for the per-response refine endpoint.
  *
  * POST /api/funding/applications/[id]/responses/[responseId]/refine
  *
  * Covers:
- *  - 404 when response does not exist
+ *  - 404 when response does not exist (or is not in this application/tenant)
  *  - 400 when application is not in DRAFT status
  *  - 200 + content updated with AI_DRAFT source on success
  *  - LLM provider is mocked; no real calls are made
  */
-
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
-
-// ── session mock ────────────────────────────────────────────────────────────
-let mockSessionReturn: any;
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
 // ── LLM provider mock ────────────────────────────────────────────────────────
+const mockProviderCall = jest.fn();
 jest.mock("@/lib/agent/providers", () => ({
-  getProvider: () => ({
-    name: "mock",
-    call: jest.fn().mockResolvedValue({
-      content: {
-        draftText: "Mock refined answer for grant question.",
-        confidence: 0.85,
-        notes: "Used club member count and recent events.",
-      },
-      model: "mock-model",
-      usage: {},
-    }),
-  }),
+  getProvider: () => ({ name: "mock", call: mockProviderCall }),
 }));
 
+// Club-context aggregation reads many tables; it is not under test here.
+jest.mock("@/lib/funding/ai", () => ({
+  ...jest.requireActual("@/lib/funding/ai"),
+  aggregateTenantContext: jest.fn(),
+}));
+
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { jsonRequest, readJson, request, routeParams } from "@/test-utils/http";
+import { aggregateTenantContext } from "@/lib/funding/ai";
 import { POST } from "@/app/api/funding/applications/[id]/responses/[responseId]/refine/route";
 
-const stamp = Date.now();
-const cleanup: { tenantId?: string; userIds: string[] } = { userIds: [] };
+const TENANT = "t1";
+const APP = "app-1";
+const RESPONSE = "resp-1";
 
-let tenantId: string;
-let adminId: string;
-let opportunityId: string;
-let applicationId: string;
-let questionId: string;
-let responseId: string;
+const refine = async (appId: string, respId: string, body?: object) =>
+  readJson(
+    await POST(
+      jsonRequest("POST", `/api/funding/applications/${appId}/responses/${respId}/refine`, body ?? {}),
+      routeParams({ id: appId, responseId: respId }),
+    ),
+  );
 
-function adminSession(tid: string, uid: string) {
+function responseRow(applicationStatus = "DRAFT") {
   return {
-    session: {
-      user: {
-        id: uid,
-        email: `refine-admin-${stamp}@test.com`,
-        name: "Refine Admin",
-        role: "TENANT_ADMIN",
-        tenantId: tid,
-        actingAs: null,
-      },
+    id: RESPONSE,
+    applicationId: APP,
+    questionId: "q-1",
+    questionLabel: "Describe your club",
+    content: "Initial draft text.",
+    source: "MANUAL",
+    application: {
+      id: APP,
+      tenantId: TENANT,
+      status: applicationStatus,
+      opportunity: { name: "Test Grant", funder: "Test Funder", description: "A test opportunity" },
     },
+    question: { label: "Describe your club", helpText: null },
   };
 }
 
-function refineReq(appId: string, respId: string, body?: object) {
-  return new NextRequest(
-    `http://localhost/api/funding/applications/${appId}/responses/${respId}/refine`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body ?? {}),
-    },
-  );
-}
-
-beforeAll(async () => {
-  const t = await prisma.tenant.create({
-    data: {
-      name: `Refine Test ${stamp}`,
-      slug: `refine-${stamp}`,
-      active: true,
-      country: "GB",
-    },
+beforeEach(() => {
+  signInAs({ id: "admin-1", role: "TENANT_ADMIN", tenantId: TENANT });
+  // funding feature flag on
+  prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: true } as never);
+  prismaMock.fundingResponse.findFirst.mockResolvedValue(null);
+  prismaMock.fundingResponse.update.mockImplementation((async ({ where, data }: any) => ({
+    ...responseRow(),
+    id: where.id,
+    ...data,
+  })) as never);
+  jest.mocked(aggregateTenantContext).mockResolvedValue({
+    tenantName: "Refine Test Club",
+    orgType: null,
+    country: "GB",
+    locality: null,
+    charityNumber: null,
+    totalMembers: 42,
+    newMembersThisYear: null,
+    recentEvents: [],
+    financialSummary: null,
+    recentMaintenance: [],
+    otherApplications: [],
   });
-  tenantId = t.id;
-  cleanup.tenantId = t.id;
-
-  await prisma.featureFlag.upsert({
-    where: { tenantId_key: { tenantId, key: "funding" } },
-    update: { enabled: true },
-    create: { tenantId, key: "funding", enabled: true },
-  });
-
-  const admin = await prisma.user.create({
-    data: {
-      email: `refine-admin-${stamp}@test.com`,
-      name: "Refine Admin",
-      passwordHash: "x",
-      role: "TENANT_ADMIN",
-      tenantId,
+  mockProviderCall.mockReset().mockResolvedValue({
+    content: {
+      draftText: "Mock refined answer for grant question.",
+      confidence: 0.85,
+      notes: "Used club member count and recent events.",
     },
+    model: "mock-model",
+    usage: {},
   });
-  adminId = admin.id;
-  cleanup.userIds.push(adminId);
-
-  // Seed a permission group so assertPermissionOrFail resolves via TENANT_ADMIN bypass.
-  // (TENANT_ADMIN has implicit all-permissions — no explicit group needed.)
-
-  const opp = await prisma.fundingOpportunity.create({
-    data: {
-      name: `Test Grant ${stamp}`,
-      funder: "Test Funder",
-      description: "A test opportunity",
-      maxAmount: 10000,
-      tenant: { connect: { id: tenantId } },
-    },
-  });
-  opportunityId = opp.id;
-
-  const q = await prisma.fundingQuestion.create({
-    data: {
-      opportunityId,
-      label: "Describe your club",
-      sortOrder: 0,
-    },
-  });
-  questionId = q.id;
-
-  const app = await prisma.fundingApplication.create({
-    data: {
-      tenantId,
-      opportunityId,
-      status: "DRAFT",
-      createdById: adminId,
-    },
-  });
-  applicationId = app.id;
-
-  const resp = await prisma.fundingResponse.create({
-    data: {
-      applicationId,
-      questionId,
-      questionLabel: "Describe your club",
-      content: "Initial draft text.",
-      source: "MANUAL",
-    },
-  });
-  responseId = resp.id;
-});
-
-afterAll(async () => {
-  if (cleanup.tenantId) {
-    await prisma.fundingResponse.deleteMany({ where: { application: { tenantId: cleanup.tenantId } } });
-    await prisma.fundingApplication.deleteMany({ where: { tenantId: cleanup.tenantId } });
-    await prisma.fundingQuestion.deleteMany({ where: { opportunity: { tenantId: cleanup.tenantId } } });
-    await prisma.fundingOpportunity.deleteMany({ where: { tenantId: cleanup.tenantId } });
-    await prisma.featureFlag.deleteMany({ where: { tenantId: cleanup.tenantId } });
-    await prisma.user.deleteMany({ where: { id: { in: cleanup.userIds } } });
-    await prisma.tenant.delete({ where: { id: cleanup.tenantId } });
-  }
-  await prisma.$disconnect();
 });
 
 describe("POST /api/funding/applications/[id]/responses/[responseId]/refine", () => {
-  beforeEach(() => {
-    mockSessionReturn = adminSession(tenantId, adminId);
-  });
-
   it("returns 404 when the responseId does not exist", async () => {
-    const req = refineReq(applicationId, "nonexistent-response-id");
-    const res = await POST(req, {
-      params: Promise.resolve({ id: applicationId, responseId: "nonexistent-response-id" }),
-    });
-    expect(res.status).toBe(404);
+    const { status } = await refine(APP, "nonexistent-response-id");
+
+    expect(status).toBe(404);
+    expect(prismaMock.fundingResponse.update).not.toHaveBeenCalled();
   });
 
-  it("returns 404 when the response belongs to a different application", async () => {
-    const otherApp = await prisma.fundingApplication.create({
-      data: { tenantId, opportunityId, status: "DRAFT", createdById: adminId },
-    });
-    const req = refineReq(otherApp.id, responseId);
-    const res = await POST(req, {
-      params: Promise.resolve({ id: otherApp.id, responseId }),
-    });
-    expect(res.status).toBe(404);
-    await prisma.fundingApplication.delete({ where: { id: otherApp.id } });
+  it("looks the response up scoped to the application and tenant (404 for another application)", async () => {
+    // findFirst returns null: the response does not belong to "other-app" in this tenant.
+    const { status } = await refine("other-app", RESPONSE);
+
+    expect(status).toBe(404);
+    expect(prismaMock.fundingResponse.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: RESPONSE, applicationId: "other-app", application: { tenantId: TENANT } },
+      }),
+    );
+    expect(prismaMock.fundingResponse.update).not.toHaveBeenCalled();
   });
 
   it("returns 400 when application is not DRAFT", async () => {
-    // Temporarily mark as SUBMITTED.
-    await prisma.fundingApplication.update({
-      where: { id: applicationId },
-      data: { status: "SUBMITTED" },
-    });
-    const req = refineReq(applicationId, responseId);
-    const res = await POST(req, {
-      params: Promise.resolve({ id: applicationId, responseId }),
-    });
-    expect(res.status).toBe(400);
-    // Restore.
-    await prisma.fundingApplication.update({
-      where: { id: applicationId },
-      data: { status: "DRAFT" },
-    });
+    prismaMock.fundingResponse.findFirst.mockResolvedValue(responseRow("SUBMITTED") as never);
+
+    const { status } = await refine(APP, RESPONSE);
+
+    expect(status).toBe(400);
+    expect(mockProviderCall).not.toHaveBeenCalled();
+    expect(prismaMock.fundingResponse.update).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when the funding feature is disabled", async () => {
+    prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: false } as never);
+
+    const { status } = await refine(APP, RESPONSE);
+
+    expect(status).toBe(403);
+    expect(prismaMock.fundingResponse.findFirst).not.toHaveBeenCalled();
   });
 
   it("refines the answer and writes AI_DRAFT back", async () => {
-    const req = refineReq(applicationId, responseId, { instruction: "make it shorter" });
-    const res = await POST(req, {
-      params: Promise.resolve({ id: applicationId, responseId }),
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    prismaMock.fundingResponse.findFirst.mockResolvedValue(responseRow() as never);
+
+    const { status, body } = await refine(APP, RESPONSE, { instruction: "make it shorter" });
+
+    expect(status).toBe(200);
     expect(body.response.content).toBe("Mock refined answer for grant question.");
     expect(body.response.source).toBe("AI_DRAFT");
     expect(body.confidence).toBe(0.85);
     expect(body.model).toBe("mock-model");
 
-    // Verify persisted.
-    const persisted = await prisma.fundingResponse.findUnique({
-      where: { id: responseId },
+    expect(prismaMock.fundingResponse.update).toHaveBeenCalledWith({
+      where: { id: RESPONSE },
+      data: { content: "Mock refined answer for grant question.", source: "AI_DRAFT" },
     });
-    expect(persisted?.content).toBe("Mock refined answer for grant question.");
-    expect(persisted?.source).toBe("AI_DRAFT");
+    expect(aggregateTenantContext).toHaveBeenCalledWith(TENANT);
+    const prompt = mockProviderCall.mock.calls[0][0].userPrompt as string;
+    expect(prompt).toContain("make it shorter");
+    expect(prompt).toContain("Initial draft text.");
   });
 
   it("works without an instruction body", async () => {
-    const req = new NextRequest(
-      `http://localhost/api/funding/applications/${applicationId}/responses/${responseId}/refine`,
-      { method: "POST" },
+    prismaMock.fundingResponse.findFirst.mockResolvedValue(responseRow() as never);
+
+    const res = await POST(
+      request(`/api/funding/applications/${APP}/responses/${RESPONSE}/refine`, { method: "POST" }),
+      routeParams({ id: APP, responseId: RESPONSE }),
     );
-    const res = await POST(req, {
-      params: Promise.resolve({ id: applicationId, responseId }),
-    });
+
     expect(res.status).toBe(200);
+    expect(prismaMock.fundingResponse.update).toHaveBeenCalled();
+    expect(mockProviderCall.mock.calls[0][0].userPrompt).not.toContain("User instruction");
   });
 });

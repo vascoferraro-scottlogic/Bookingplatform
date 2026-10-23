@@ -1,241 +1,183 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
+import type { Role } from "@prisma/client";
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { jsonRequest, request, readJson, routeParams } from "@/test-utils/http";
 
 import { GET } from "@/app/api/maintenance/route";
 import { PATCH as PATCH_VISIBILITY } from "@/app/api/maintenance/[id]/visibility/route";
 
-let tenantId: string;
-let otherTenantId: string;
-let adminId: string;
-let maintainerId: string;
-let memberId: string;
-let otherMemberId: string;
+const TENANT_ID = "tenant-1";
+const OTHER_TENANT_ID = "tenant-2";
+const ADMIN_ID = "vis-admin";
+const MAINTAINER_ID = "vis-maintainer";
+const MEMBER_ID = "vis-member";
+const OTHER_MEMBER_ID = "vis-member-2";
 
-let adminTaskId: string;        // MAINTENANCE_ONLY, submittedById = adminId
-let memberSubmittedTaskId: string; // MEMBERS, submittedById = memberId
-let publicTaskId: string;        // PUBLIC, submittedById = adminId
-let maintainerSelfTaskId: string; // MAINTENANCE_ONLY, submittedById = maintainerId
-let otherMemberMembersTaskId: string; // MEMBERS but submitted by someone else
-
-function sessionFor(role: string, userId: string, tid = tenantId) {
-  return {
-    session: {
-      user: { id: userId, email: `${role}@test.com`, name: role, role, tenantId: tid },
-    },
-  };
-}
-
-function makeListReq(): NextRequest {
-  return new NextRequest(`http://localhost/api/maintenance?tenantId=${tenantId}`);
-}
-
-function makePatchReq(body: Record<string, unknown>): NextRequest {
-  return new NextRequest("http://localhost/api/maintenance/x/visibility", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-beforeAll(async () => {
-  const tenant = await prisma.tenant.create({
-    data: { name: "Vis Test Club", slug: "vis-test-" + Date.now() },
-  });
-  tenantId = tenant.id;
-
-  const other = await prisma.tenant.create({
-    data: { name: "Other Vis Club", slug: "other-vis-" + Date.now() },
-  });
-  otherTenantId = other.id;
-
-  const admin = await prisma.user.create({
-    data: { email: `vis-admin-${Date.now()}@test.com`, name: "VAdmin", passwordHash: "x", role: "TENANT_ADMIN", tenantId },
-  });
-  adminId = admin.id;
-
-  const maintainer = await prisma.user.create({
-    data: { email: `vis-mnt-${Date.now()}@test.com`, name: "VMnt", passwordHash: "x", role: "MAINTENANCE", tenantId },
-  });
-  maintainerId = maintainer.id;
-
-  const member = await prisma.user.create({
-    data: { email: `vis-mem-${Date.now()}@test.com`, name: "VMem", passwordHash: "x", role: "USER", tenantId },
-  });
-  memberId = member.id;
-
-  const otherMember = await prisma.user.create({
-    data: { email: `vis-mem2-${Date.now()}@test.com`, name: "VMem2", passwordHash: "x", role: "USER", tenantId },
-  });
-  otherMemberId = otherMember.id;
-
-  // Mix of tasks with different visibilities and submitters.
-  const t1 = await prisma.maintenanceTask.create({
-    data: {
-      tenantId, title: "Agent triage", description: "x",
-      visibility: "MAINTENANCE_ONLY", submittedById: adminId,
-    },
-  });
-  adminTaskId = t1.id;
-
-  const t2 = await prisma.maintenanceTask.create({
-    data: {
-      tenantId, title: "Members visible", description: "x",
-      visibility: "MEMBERS", submittedById: memberId,
-    },
-  });
-  memberSubmittedTaskId = t2.id;
-
-  const t3 = await prisma.maintenanceTask.create({
-    data: {
-      tenantId, title: "Public", description: "x",
-      visibility: "PUBLIC", submittedById: adminId,
-    },
-  });
-  publicTaskId = t3.id;
-
-  const t4 = await prisma.maintenanceTask.create({
-    data: {
-      tenantId, title: "Maintainer own", description: "x",
-      visibility: "MAINTENANCE_ONLY", submittedById: maintainerId,
-    },
-  });
-  maintainerSelfTaskId = t4.id;
-
-  const t5 = await prisma.maintenanceTask.create({
-    data: {
-      tenantId, title: "Other member visible", description: "x",
-      visibility: "MEMBERS", submittedById: otherMemberId,
-    },
-  });
-  otherMemberMembersTaskId = t5.id;
+type Task = { id: string; tenantId: string; title: string; visibility: string; submittedById: string; assignedToId: string | null };
+const task = (id: string, visibility: string, submittedById: string, tenantId = TENANT_ID): Task => ({
+  id, tenantId, title: id, visibility, submittedById, assignedToId: null,
 });
 
-afterAll(async () => {
-  await new Promise((r) => setTimeout(r, 200));
-  await prisma.auditEvent.deleteMany({ where: { tenantId: { in: [tenantId, otherTenantId] } } });
-  await prisma.maintenanceTask.deleteMany({ where: { tenantId: { in: [tenantId, otherTenantId] } } });
-  await prisma.user.deleteMany({ where: { tenantId: { in: [tenantId, otherTenantId] } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: [tenantId, otherTenantId] } } });
-  await prisma.$disconnect();
-});
+// Mix of tasks with different visibilities and submitters.
+const ADMIN_TASK = task("admin-task", "MAINTENANCE_ONLY", ADMIN_ID); // agent triage
+const MEMBER_SUBMITTED_TASK = task("member-task", "MEMBERS", MEMBER_ID);
+const PUBLIC_TASK = task("public-task", "PUBLIC", ADMIN_ID);
+const MAINTAINER_SELF_TASK = task("maintainer-task", "MAINTENANCE_ONLY", MAINTAINER_ID);
+const OTHER_MEMBER_MEMBERS_TASK = task("other-member-task", "MEMBERS", OTHER_MEMBER_ID);
+const OTHER_TENANT_TASK = task("other-tenant-task", "PUBLIC", "someone-else", OTHER_TENANT_ID);
+const ALL_TASKS = [ADMIN_TASK, MEMBER_SUBMITTED_TASK, PUBLIC_TASK, MAINTAINER_SELF_TASK, OTHER_MEMBER_MEMBERS_TASK, OTHER_TENANT_TASK];
+
+const signInAsRole = (role: Role, id: string, tenantId = TENANT_ID) => signInAs({ id, role, tenantId });
+
+/**
+ * Evaluates the subset of Prisma `where` syntax the list route builds
+ * (field equality, `{ in: [...] }`, `OR`) so the visibility rules can be
+ * checked against concrete tasks, not just as a clause shape.
+ */
+function matches(t: Record<string, unknown>, where: Record<string, any>): boolean {
+  return Object.entries(where).every(([key, cond]) => {
+    if (key === "OR") return (cond as Record<string, any>[]).some((c) => matches(t, c));
+    if (cond && typeof cond === "object" && "in" in cond) return cond.in.includes(t[key]);
+    return t[key] === cond;
+  });
+}
+
+async function listVisibleIds() {
+  prismaMock.maintenanceTask.findMany.mockImplementation((async ({ where }: any) =>
+    ALL_TASKS.filter((t) => matches(t, where))) as never);
+  const { status, body } = await readJson(await GET(request(`/api/maintenance?tenantId=${TENANT_ID}`)));
+  expect(status).toBe(200);
+  return (body as Task[]).map((t) => t.id);
+}
+
+function listWhere() {
+  return (prismaMock.maintenanceTask.findMany.mock.calls[0][0] as any).where;
+}
 
 describe("GET /api/maintenance — visibility filtering", () => {
-  test("TENANT_ADMIN sees all five tasks", async () => {
-    mockSessionReturn = sessionFor("TENANT_ADMIN", adminId);
-    const res = await GET(makeListReq());
-    expect(res.status).toBe(200);
-    const tasks = await res.json();
-    const ids = tasks.map((t: any) => t.id);
+  test("TENANT_ADMIN filters by tenant only and sees all five of its tasks", async () => {
+    signInAsRole("TENANT_ADMIN", ADMIN_ID);
+    const ids = await listVisibleIds();
+
+    expect(listWhere()).toEqual({ tenantId: TENANT_ID });
     expect(ids).toEqual(expect.arrayContaining([
-      adminTaskId, memberSubmittedTaskId, publicTaskId,
-      maintainerSelfTaskId, otherMemberMembersTaskId,
+      ADMIN_TASK.id, MEMBER_SUBMITTED_TASK.id, PUBLIC_TASK.id,
+      MAINTAINER_SELF_TASK.id, OTHER_MEMBER_MEMBERS_TASK.id,
     ]));
+    expect(ids).not.toContain(OTHER_TENANT_TASK.id);
   });
 
   test("MAINTENANCE sees own + MAINTENANCE_ONLY but not arbitrary MEMBERS", async () => {
-    mockSessionReturn = sessionFor("MAINTENANCE", maintainerId);
-    const res = await GET(makeListReq());
-    expect(res.status).toBe(200);
-    const ids = (await res.json()).map((t: any) => t.id);
-    expect(ids).toEqual(expect.arrayContaining([adminTaskId, maintainerSelfTaskId]));
-    expect(ids).not.toContain(memberSubmittedTaskId);
-    expect(ids).not.toContain(otherMemberMembersTaskId);
-    expect(ids).not.toContain(publicTaskId);
+    signInAsRole("MAINTENANCE", MAINTAINER_ID);
+    const ids = await listVisibleIds();
+
+    expect(listWhere()).toEqual({
+      tenantId: TENANT_ID,
+      OR: [
+        { assignedToId: MAINTAINER_ID },
+        { submittedById: MAINTAINER_ID },
+        { visibility: "MAINTENANCE_ONLY" },
+      ],
+    });
+    expect(ids).toEqual(expect.arrayContaining([ADMIN_TASK.id, MAINTAINER_SELF_TASK.id]));
+    expect(ids).not.toContain(MEMBER_SUBMITTED_TASK.id);
+    expect(ids).not.toContain(OTHER_MEMBER_MEMBERS_TASK.id);
+    expect(ids).not.toContain(PUBLIC_TASK.id);
   });
 
   test("USER sees own + MEMBERS + PUBLIC but never MAINTENANCE_ONLY", async () => {
-    mockSessionReturn = sessionFor("USER", memberId);
-    const res = await GET(makeListReq());
-    expect(res.status).toBe(200);
-    const ids = (await res.json()).map((t: any) => t.id);
+    signInAsRole("USER", MEMBER_ID);
+    const ids = await listVisibleIds();
+
+    expect(listWhere()).toEqual({
+      tenantId: TENANT_ID,
+      OR: [
+        { submittedById: MEMBER_ID },
+        { visibility: { in: ["MEMBERS", "PUBLIC"] } },
+      ],
+    });
     expect(ids).toEqual(expect.arrayContaining([
-      memberSubmittedTaskId, otherMemberMembersTaskId, publicTaskId,
+      MEMBER_SUBMITTED_TASK.id, OTHER_MEMBER_MEMBERS_TASK.id, PUBLIC_TASK.id,
     ]));
-    expect(ids).not.toContain(adminTaskId);
-    expect(ids).not.toContain(maintainerSelfTaskId);
+    expect(ids).not.toContain(ADMIN_TASK.id);
+    expect(ids).not.toContain(MAINTAINER_SELF_TASK.id);
+    expect(ids).not.toContain(OTHER_TENANT_TASK.id);
   });
 });
 
 describe("PATCH /api/maintenance/[id]/visibility", () => {
+  const patch = (id: string, body: Record<string, unknown>) =>
+    PATCH_VISIBILITY(jsonRequest("PATCH", `/api/maintenance/${id}/visibility`, body), routeParams({ id }));
+
+  beforeEach(() => {
+    prismaMock.maintenanceTask.findUnique.mockImplementation((async ({ where }: any) =>
+      ALL_TASKS.find((t) => t.id === where.id) ?? null) as never);
+    prismaMock.maintenanceTask.update.mockImplementation((async ({ where, data }: any) => ({
+      ...ALL_TASKS.find((t) => t.id === where.id),
+      ...data,
+    })) as never);
+    prismaMock.auditEvent.create.mockResolvedValue({} as never);
+  });
+
+  const visibilityAudits = () =>
+    prismaMock.auditEvent.create.mock.calls
+      .map(([a]) => (a as any).data)
+      .filter((d) => d.action === "task.visibility_changed");
+
   test("MAINTENANCE can promote MAINTENANCE_ONLY → MEMBERS, audit row written", async () => {
-    mockSessionReturn = sessionFor("MAINTENANCE", maintainerId);
-    const res = await PATCH_VISIBILITY(makePatchReq({ visibility: "MEMBERS" }), {
-      params: Promise.resolve({ id: adminTaskId }),
-    });
-    expect(res.status).toBe(200);
-    const updated = await res.json();
-    expect(updated.visibility).toBe("MEMBERS");
+    signInAsRole("MAINTENANCE", MAINTAINER_ID);
+    const { status, body } = await readJson(await patch(ADMIN_TASK.id, { visibility: "MEMBERS" }));
 
-    await new Promise((r) => setTimeout(r, 200));
-    const audits = await prisma.auditEvent.findMany({
-      where: { entityId: adminTaskId, action: "task.visibility_changed" },
+    expect(status).toBe(200);
+    expect(body.visibility).toBe("MEMBERS");
+    expect(prismaMock.maintenanceTask.update).toHaveBeenCalledWith({
+      where: { id: ADMIN_TASK.id },
+      data: { visibility: "MEMBERS" },
     });
-    expect(audits.length).toBeGreaterThan(0);
-    const meta = typeof audits[0].meta === "string" ? JSON.parse(audits[0].meta) : audits[0].meta;
-    expect(meta).toMatchObject({ from: "MAINTENANCE_ONLY", to: "MEMBERS" });
 
-    // Reset for other tests
-    await prisma.maintenanceTask.update({
-      where: { id: adminTaskId },
-      data: { visibility: "MAINTENANCE_ONLY" },
-    });
+    const audits = visibilityAudits();
+    expect(audits).toHaveLength(1);
+    expect(audits[0].entityId).toBe(ADMIN_TASK.id);
+    expect(audits[0].tenantId).toBe(TENANT_ID);
+    expect(JSON.parse(audits[0].meta)).toMatchObject({ from: "MAINTENANCE_ONLY", to: "MEMBERS" });
   });
 
   test("USER (member) is forbidden", async () => {
-    mockSessionReturn = sessionFor("USER", memberId);
-    const res = await PATCH_VISIBILITY(makePatchReq({ visibility: "PUBLIC" }), {
-      params: Promise.resolve({ id: adminTaskId }),
-    });
+    signInAsRole("USER", MEMBER_ID);
+    const res = await patch(ADMIN_TASK.id, { visibility: "PUBLIC" });
     expect(res.status).toBe(403);
+    expect(prismaMock.maintenanceTask.update).not.toHaveBeenCalled();
   });
 
   test("rejects invalid visibility value", async () => {
-    mockSessionReturn = sessionFor("MAINTENANCE", maintainerId);
-    const res = await PATCH_VISIBILITY(makePatchReq({ visibility: "WORLD" }), {
-      params: Promise.resolve({ id: adminTaskId }),
-    });
+    signInAsRole("MAINTENANCE", MAINTAINER_ID);
+    const res = await patch(ADMIN_TASK.id, { visibility: "WORLD" });
     expect(res.status).toBe(400);
+    expect(prismaMock.maintenanceTask.update).not.toHaveBeenCalled();
   });
 
   test("404 for unknown task", async () => {
-    mockSessionReturn = sessionFor("MAINTENANCE", maintainerId);
-    const res = await PATCH_VISIBILITY(makePatchReq({ visibility: "MEMBERS" }), {
-      params: Promise.resolve({ id: "nonexistent-id-xyz" }),
-    });
+    signInAsRole("MAINTENANCE", MAINTAINER_ID);
+    const res = await patch("nonexistent-id-xyz", { visibility: "MEMBERS" });
     expect(res.status).toBe(404);
   });
 
   test("forbids cross-tenant access", async () => {
-    mockSessionReturn = sessionFor("TENANT_ADMIN", adminId, otherTenantId);
-    const res = await PATCH_VISIBILITY(makePatchReq({ visibility: "PUBLIC" }), {
-      params: Promise.resolve({ id: adminTaskId }),
-    });
+    signInAsRole("TENANT_ADMIN", "other-admin", OTHER_TENANT_ID);
+    const res = await patch(ADMIN_TASK.id, { visibility: "PUBLIC" });
     expect(res.status).toBe(403);
+    expect(prismaMock.maintenanceTask.update).not.toHaveBeenCalled();
   });
 
-  test("no-op when visibility unchanged returns 200 and no extra audit row", async () => {
-    mockSessionReturn = sessionFor("MAINTENANCE", maintainerId);
-    const before = await prisma.auditEvent.count({
-      where: { entityId: maintainerSelfTaskId, action: "task.visibility_changed" },
-    });
-    const res = await PATCH_VISIBILITY(makePatchReq({ visibility: "MAINTENANCE_ONLY" }), {
-      params: Promise.resolve({ id: maintainerSelfTaskId }),
-    });
+  test("no-op when visibility unchanged returns 200 and writes no audit row", async () => {
+    signInAsRole("MAINTENANCE", MAINTAINER_ID);
+    const res = await patch(MAINTAINER_SELF_TASK.id, { visibility: "MAINTENANCE_ONLY" });
+
     expect(res.status).toBe(200);
-    await new Promise((r) => setTimeout(r, 200));
-    const after = await prisma.auditEvent.count({
-      where: { entityId: maintainerSelfTaskId, action: "task.visibility_changed" },
-    });
-    expect(after).toBe(before);
+    expect(prismaMock.maintenanceTask.update).not.toHaveBeenCalled();
+    expect(visibilityAudits()).toHaveLength(0);
   });
 });

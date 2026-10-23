@@ -1,166 +1,121 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
+jest.mock("@/lib/audit", () => ({ logAudit: jest.fn() }));
+jest.mock("@/lib/outbound", () => ({ sendEmail: jest.fn() }));
 
-let mockSessionReturn: any;
-
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
-
+import { prismaMock } from "@/test-utils/prisma-mock";
+import { signInAs } from "@/test-utils/session";
+import { jsonRequest, readJson, request, routeParams } from "@/test-utils/http";
+import { dateFromToday } from "@/test-utils/dates";
+import { logAudit } from "@/lib/audit";
+import { sendEmail } from "@/lib/outbound";
 import { POST as invitePOST } from "@/app/api/onboarding/invite/route";
 import { GET as acceptGET, POST as acceptPOST } from "@/app/api/invitations/[token]/route";
 
-let onboardingTenantId: string;
-let activeTenantId: string;
-let onboardingAdminId: string;
-let activeAdminId: string;
-const cleanup: { tenantIds: string[]; userIds: string[] } = { tenantIds: [], userIds: [] };
+const invite = async (body: Record<string, unknown>) =>
+  readJson(await invitePOST(jsonRequest("POST", "/api/onboarding/invite", body)));
 
-function adminSession(tenantId: string, userId: string) {
+function givenTenant(id: string, status: "ONBOARDING" | "ACTIVE") {
+  signInAs({ id: `${id}-admin`, role: "TENANT_ADMIN", tenantId: id });
+  prismaMock.tenant.findUnique.mockResolvedValue({ id, name: `Club ${id}`, slug: `club-${id}`, status } as never);
+}
+
+function queuedInvitation() {
   return {
-    session: {
-      user: {
-        id: userId,
-        email: "queued-admin@test.com",
-        name: "Queued Admin",
-        role: "TENANT_ADMIN",
-        tenantId,
-        actingAs: null,
-      },
-    },
+    id: "inv-q",
+    email: "queued-invitee@test.com",
+    role: "USER",
+    token: "tok-queued",
+    status: "QUEUED",
+    tenantId: "t-onb",
+    expiresAt: dateFromToday(14),
+    tenant: { id: "t-onb", name: "Club t-onb", slug: "club-t-onb", locality: null },
+    invitedBy: { name: "Admin", email: "admin@test.com" },
   };
 }
 
-function inviteReq(body: Record<string, unknown>) {
-  return new NextRequest("http://localhost/api/onboarding/invite", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-beforeAll(async () => {
-  const stamp = Date.now();
-  const ob = await prisma.tenant.create({
-    data: { name: "Queued OB Club", slug: `q-ob-${stamp}`, status: "ONBOARDING", active: false },
-  });
-  onboardingTenantId = ob.id;
-  cleanup.tenantIds.push(ob.id);
-
-  const live = await prisma.tenant.create({
-    data: { name: "Queued Live Club", slug: `q-live-${stamp}`, status: "ACTIVE", active: true, goLiveAt: new Date() },
-  });
-  activeTenantId = live.id;
-  cleanup.tenantIds.push(live.id);
-
-  const obAdmin = await prisma.user.create({
-    data: { email: `q-ob-admin-${stamp}@test.com`, name: "OB Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId: onboardingTenantId },
-  });
-  onboardingAdminId = obAdmin.id;
-  cleanup.userIds.push(obAdmin.id);
-
-  const liveAdmin = await prisma.user.create({
-    data: { email: `q-live-admin-${stamp}@test.com`, name: "Live Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId: activeTenantId },
-  });
-  activeAdminId = liveAdmin.id;
-  cleanup.userIds.push(liveAdmin.id);
-});
-
-afterAll(async () => {
-  // Clean any users invited during tests too.
-  const inviteEmails = await prisma.userInvitation.findMany({
-    where: { tenantId: { in: cleanup.tenantIds } },
-    select: { email: true },
-  });
-  await prisma.userInvitation.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.outboundMessage.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.membership.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.auditEvent.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.auditEvent.deleteMany({ where: { actorId: { in: cleanup.userIds } } });
-
-  const allUserIds = [...cleanup.userIds];
-  if (inviteEmails.length) {
-    const invitedUsers = await prisma.user.findMany({
-      where: { email: { in: inviteEmails.map((i) => i.email) } },
-      select: { id: true },
-    });
-    allUserIds.push(...invitedUsers.map((u) => u.id));
-  }
-  await prisma.user.updateMany({ where: { id: { in: allUserIds } }, data: { tenantId: null } });
-  await prisma.user.deleteMany({ where: { id: { in: allUserIds } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: cleanup.tenantIds } } });
-  await prisma.$disconnect();
+beforeEach(() => {
+  jest.mocked(logAudit).mockClear();
+  jest.mocked(sendEmail).mockClear();
+  prismaMock.user.findUnique.mockResolvedValue(null);
+  prismaMock.user.create.mockImplementation((async ({ data }: any) => ({ id: "invitee-1", ...data })) as never);
+  prismaMock.membership.findUnique.mockResolvedValue(null);
+  prismaMock.userInvitation.findFirst.mockResolvedValue(null);
+  prismaMock.userInvitation.create.mockImplementation((async ({ data }: any) => ({
+    id: "inv-new",
+    token: "tok-new",
+    ...data,
+  })) as never);
 });
 
 describe("invitations: QUEUED for onboarding tenants", () => {
   test("POST /api/onboarding/invite issues QUEUED for an ONBOARDING tenant and skips the email stub", async () => {
-    mockSessionReturn = adminSession(onboardingTenantId, onboardingAdminId);
-    const stamp = Date.now();
-    const inviteeEmail = `queued-invitee-${stamp}@test.com`;
+    givenTenant("t-onb", "ONBOARDING");
 
-    const res = await invitePOST(inviteReq({ email: inviteeEmail, role: "USER" }));
-    expect(res.status).toBeLessThan(300);
+    const { status, body } = await invite({ email: "queued-invitee@test.com", role: "USER" });
 
-    const inv = await prisma.userInvitation.findFirst({
-      where: { tenantId: onboardingTenantId, email: inviteeEmail },
+    expect(status).toBe(201);
+    expect(body.status).toBe("QUEUED");
+    expect(prismaMock.tenant.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "t-onb" } }));
+    expect(prismaMock.userInvitation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ email: "queued-invitee@test.com", tenantId: "t-onb", status: "QUEUED" }),
     });
-    expect(inv?.status).toBe("QUEUED");
-
-    // No invitation-template outbound for this invite (queued = no email yet).
-    const outbound = await prisma.outboundMessage.findMany({
-      where: { tenantId: onboardingTenantId, relatedEntityId: inv!.id },
-    });
-    expect(outbound.length).toBe(0);
+    // Queued = no invitation email yet.
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "onboarding.user.invited.queued", tenantId: "t-onb" }),
+    );
   });
 
   test("POST /api/onboarding/invite issues PENDING for an ACTIVE tenant", async () => {
-    mockSessionReturn = adminSession(activeTenantId, activeAdminId);
-    const stamp = Date.now();
-    const inviteeEmail = `live-invitee-${stamp}@test.com`;
+    givenTenant("t-live", "ACTIVE");
 
-    const res = await invitePOST(inviteReq({ email: inviteeEmail, role: "USER" }));
-    expect(res.status).toBeLessThan(300);
+    const { status, body } = await invite({ email: "live-invitee@test.com", role: "USER" });
 
-    const inv = await prisma.userInvitation.findFirst({
-      where: { tenantId: activeTenantId, email: inviteeEmail },
+    expect(status).toBe(201);
+    expect(body.status).toBe("PENDING");
+    expect(prismaMock.userInvitation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ email: "live-invitee@test.com", tenantId: "t-live", status: "PENDING" }),
     });
-    expect(inv?.status).toBe("PENDING");
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "live-invitee@test.com",
+        template: "invitation",
+        tenantId: "t-live",
+        relatedEntityId: "inv-new",
+      }),
+    );
   });
 
   test("GET /api/invitations/[token] flags QUEUED invitations as stale", async () => {
-    const inv = await prisma.userInvitation.findFirst({
-      where: { tenantId: onboardingTenantId, status: "QUEUED" },
-    });
-    expect(inv).toBeTruthy();
+    prismaMock.userInvitation.findUnique.mockResolvedValue(queuedInvitation() as never);
 
-    const res = await acceptGET(
-      new NextRequest(`http://localhost/api/invitations/${inv!.token}`),
-      { params: Promise.resolve({ token: inv!.token }) },
+    const { status, body } = await readJson(
+      await acceptGET(request("/api/invitations/tok-queued"), routeParams({ token: "tok-queued" })),
     );
-    expect(res.status).toBe(200);
-    const body = await res.json();
+
+    expect(status).toBe(200);
     expect(body.status).toBe("QUEUED");
     expect(body.stale).toBe(true);
+    expect(prismaMock.userInvitation.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { token: "tok-queued" } }),
+    );
   });
 
   test("POST /api/invitations/[token] rejects acceptance of a QUEUED invitation with 409", async () => {
-    const inv = await prisma.userInvitation.findFirst({
-      where: { tenantId: onboardingTenantId, status: "QUEUED" },
-    });
-    expect(inv).toBeTruthy();
+    prismaMock.userInvitation.findUnique.mockResolvedValue(queuedInvitation() as never);
 
-    const req = new NextRequest(`http://localhost/api/invitations/${inv!.token}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: "NewPass1234" }),
-    });
-    const res = await acceptPOST(req, { params: Promise.resolve({ token: inv!.token }) });
-    expect(res.status).toBe(409);
-    const body = await res.json();
+    const { status, body } = await readJson(
+      await acceptPOST(
+        jsonRequest("POST", "/api/invitations/tok-queued", { password: "NewPass1234" }),
+        routeParams({ token: "tok-queued" }),
+      ),
+    );
+
+    expect(status).toBe(409);
     expect(body.error).toMatch(/queued/i);
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+    expect(prismaMock.membership.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.userInvitation.update).not.toHaveBeenCalled();
   });
 });

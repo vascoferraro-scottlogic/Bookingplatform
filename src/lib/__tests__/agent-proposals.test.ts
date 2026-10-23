@@ -1,9 +1,12 @@
-import { prisma } from "@/lib/prisma";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+// No real LLM: BaseAgent resolves its provider at construction time.
+jest.mock("@/lib/agent/providers", () => ({ getProvider: () => ({ name: "stub", call: jest.fn() }) }));
+
 import {
   AgentProposalAudience,
   AgentProposalStatus,
-  AgentRunStatus,
 } from "@prisma/client";
+import { prismaMock } from "@/test-utils/prisma-mock";
 import { BaseAgent, type RunSummary } from "@/lib/agent/base-agent";
 import {
   applyProposal,
@@ -15,64 +18,52 @@ import {
 
 // ── Test fixtures ──────────────────────────────────────────────
 
-let tenantId: string;
-let approverId: string;
-let agentId: string;
-let runId: string;
+const tenantId = "tenant-1";
+const approverId = "approver-1";
+const agentId = "agent-1";
+const runId = "run-1";
 
 const TEST_KIND = "TEST_PROPOSAL_KIND";
 
-beforeAll(async () => {
-  const tenant = await prisma.tenant.create({
-    data: { name: "Proposal Test Club", slug: "proposal-test-" + Date.now() },
-  });
-  tenantId = tenant.id;
+/**
+ * In-memory agentProposal table: create stores a row (with schema defaults),
+ * findUnique reads it back, update merges into it. Lets one test emit,
+ * approve and re-approve the same proposal.
+ */
+function useProposalStore() {
+  const rows = new Map<string, Record<string, unknown>>();
+  let seq = 0;
+  prismaMock.agentProposal.create.mockImplementation((async ({ data }: any) => {
+    const row = {
+      id: `p${++seq}`,
+      status: AgentProposalStatus.PENDING,
+      committedAt: null,
+      committedById: null,
+      committedEntityType: null,
+      committedEntityId: null,
+      committedPayloadDiff: null,
+      rejectedAt: null,
+      rejectedById: null,
+      rejectReason: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...data,
+    };
+    rows.set(row.id, row);
+    return row;
+  }) as never);
+  prismaMock.agentProposal.findUnique.mockImplementation((async ({ where }: any) => rows.get(where.id) ?? null) as never);
+  prismaMock.agentProposal.update.mockImplementation((async ({ where, data }: any) => {
+    const row = { ...rows.get(where.id)!, ...data };
+    rows.set(where.id, row);
+    return row;
+  }) as never);
+}
 
-  const approver = await prisma.user.create({
-    data: {
-      email: `prop-approver-${Date.now()}@test.com`,
-      name: "Approver",
-      passwordHash: "x",
-      role: "TENANT_ADMIN",
-      tenantId,
-    },
-  });
-  approverId = approver.id;
-
-  const systemUser = await prisma.user.create({
-    data: {
-      email: `prop-agent-${Date.now()}@test.com`,
-      name: "Test Agent System User",
-      passwordHash: "x",
-      role: "USER",
-    },
-  });
-  const agent = await prisma.agentDefinition.create({
-    data: {
-      slug: "test-proposal-agent-" + Date.now(),
-      name: "Test Proposal Agent",
-      systemUserId: systemUser.id,
-    },
-  });
-  agentId = agent.id;
-});
-
-afterAll(async () => {
-  await prisma.agentProposal.deleteMany({ where: { agentId } });
-  await prisma.agentRun.deleteMany({ where: { agentId } });
-  await prisma.agentDefinition.deleteMany({ where: { id: agentId } });
-  await prisma.user.deleteMany({ where: { id: approverId } });
-  await prisma.tenant.delete({ where: { id: tenantId } });
-  await prisma.$disconnect();
-});
-
-beforeEach(async () => {
-  // Fresh run + clean committer registry for each test.
+beforeEach(() => {
+  // Clean committer registry for each test.
   _resetCommittersForTest();
-  const run = await prisma.agentRun.create({
-    data: { agentId, tenantId, status: AgentRunStatus.RUNNING },
-  });
-  runId = run.id;
+  useProposalStore();
 });
 
 // ── A concrete BaseAgent subclass exposing the protected helpers ───
@@ -115,6 +106,9 @@ describe("BaseAgent.emitProposal", () => {
     expect(p.confidence).toBe(0.85);
     expect(p.status).toBe(AgentProposalStatus.PENDING);
     expect(JSON.parse(p.payload)).toEqual({ foo: "bar", n: 42 });
+    expect(prismaMock.agentProposal.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ agentId, runId, reasoning: "because reasons", targetTenantId: null, expiresAt: null }),
+    });
   });
 
   test("emits a USER-audience proposal with optional targetTenantId", async () => {
@@ -161,6 +155,7 @@ describe("BaseAgent.emitProposal", () => {
         audienceScope: AgentProposalAudience.TENANT,
       }),
     ).rejects.toThrow(/TENANT audience requires tenantId/);
+    expect(prismaMock.agentProposal.create).not.toHaveBeenCalled();
   });
 
   test("rejects USER audience with no userId", async () => {
@@ -175,6 +170,7 @@ describe("BaseAgent.emitProposal", () => {
         audienceScope: AgentProposalAudience.USER,
       }),
     ).rejects.toThrow(/USER audience requires userId/);
+    expect(prismaMock.agentProposal.create).not.toHaveBeenCalled();
   });
 
   test("rejects FEDERATION audience with no federationId", async () => {
@@ -189,6 +185,7 @@ describe("BaseAgent.emitProposal", () => {
         audienceScope: AgentProposalAudience.FEDERATION,
       }),
     ).rejects.toThrow(/FEDERATION audience requires federationId/);
+    expect(prismaMock.agentProposal.create).not.toHaveBeenCalled();
   });
 });
 
@@ -250,11 +247,14 @@ describe("applyProposal", () => {
     expect(committed.committedEntityType).toBe("TestThing");
     expect(committed.committedEntityId).toBe("thing-123");
     expect(committed.committedPayloadDiff).toBeNull();
+    expect(prismaMock.agentProposal.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: p.id } }),
+    );
   });
 
   test("captures edit deltas on approve-with-edits", async () => {
     let receivedEdits: unknown = null;
-    registerCommitter(TEST_KIND, async ({ payload, edits }) => {
+    registerCommitter(TEST_KIND, async ({ edits }) => {
       receivedEdits = edits;
       return { entityType: "Edited", entityId: "e-1" };
     });
@@ -292,13 +292,12 @@ describe("applyProposal", () => {
     await expect(applyProposal({ proposalId: p.id, approverId })).rejects.toThrow(
       /No committer registered/,
     );
+    expect(prismaMock.agentProposal.update).not.toHaveBeenCalled();
   });
 
   test("refuses to commit a non-PENDING proposal", async () => {
-    registerCommitter(TEST_KIND, async () => ({
-      entityType: "X",
-      entityId: "1",
-    }));
+    const committer = jest.fn(async () => ({ entityType: "X", entityId: "1" }));
+    registerCommitter(TEST_KIND, committer);
     const p = await agent.emitTenant({
       agentId,
       runId,
@@ -312,6 +311,7 @@ describe("applyProposal", () => {
     await expect(applyProposal({ proposalId: p.id, approverId })).rejects.toThrow(
       /can only commit PENDING/,
     );
+    expect(committer).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -337,6 +337,9 @@ describe("rejectProposal", () => {
     expect(rejected.rejectReason).toBe("not appropriate this time");
     expect(rejected.rejectedById).toBe(approverId);
     expect(rejected.rejectedAt).not.toBeNull();
+    expect(prismaMock.agentProposal.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: p.id } }),
+    );
   });
 
   test("refuses to reject a non-PENDING proposal", async () => {
@@ -375,5 +378,9 @@ describe("rejectProposal", () => {
     });
     expect(rejected.status).toBe(AgentProposalStatus.REJECTED);
     expect(rejected.rejectReason).toBeNull();
+  });
+
+  test("throws when the proposal does not exist", async () => {
+    await expect(rejectProposal({ proposalId: "missing", rejecterId: approverId })).rejects.toThrow(/not found/);
   });
 });

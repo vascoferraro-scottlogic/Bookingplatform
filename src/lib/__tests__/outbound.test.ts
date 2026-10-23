@@ -1,5 +1,7 @@
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+
 import { renderTemplate, sendOutbound } from "@/lib/outbound";
-import { prisma } from "@/lib/prisma";
+import { prismaMock } from "@/test-utils/prisma-mock";
 
 describe("outbound template rendering", () => {
   test("interpolates {{var}} placeholders", () => {
@@ -24,14 +26,11 @@ describe("outbound template rendering", () => {
 });
 
 describe("sendOutbound (stub mode)", () => {
-  const createdIds: string[] = [];
-
-  afterAll(async () => {
-    if (createdIds.length) {
-      await prisma.outboundMessage.deleteMany({ where: { id: { in: createdIds } } });
-    }
-    await prisma.$disconnect();
+  beforeEach(() => {
+    prismaMock.outboundMessage.create.mockResolvedValue({ id: "msg-1", status: "STUBBED" } as never);
   });
+
+  const written = () => (prismaMock.outboundMessage.create.mock.calls[0][0] as any).data;
 
   test("writes an OutboundMessage row with STUBBED status", async () => {
     const result = await sendOutbound({
@@ -43,49 +42,56 @@ describe("sendOutbound (stub mode)", () => {
       relatedEntity: "TestSuite",
       relatedEntityId: "outbound-1",
     });
-    createdIds.push(result.id);
-    expect(result.status).toBe("STUBBED");
 
-    const row = await prisma.outboundMessage.findUnique({ where: { id: result.id } });
-    expect(row).toBeTruthy();
-    expect(row?.channel).toBe("EMAIL");
-    expect(row?.toAddress).toBe("wullie@test.local");
-    expect(row?.subject).toBe("Test Wullie");
-    expect(row?.bodyText).toContain("Wullie");
-    expect(row?.bodyText).toContain("Burnside");
-    expect(row?.relatedEntity).toBe("TestSuite");
-    expect(row?.relatedEntityId).toBe("outbound-1");
+    expect(result).toEqual({ id: "msg-1", status: "STUBBED" });
+    expect(written()).toMatchObject({
+      channel: "EMAIL",
+      status: "STUBBED",
+      toAddress: "wullie@test.local",
+      subject: "Test Wullie",
+      relatedEntity: "TestSuite",
+      relatedEntityId: "outbound-1",
+      error: null,
+    });
+    expect(written().bodyText).toContain("Wullie");
+    expect(written().bodyText).toContain("Burnside");
+    expect(written().bodyHtml).toContain("Burnside");
   });
 
-  test("captures SMS over 160 characters with a warning in error column", async () => {
-    const longBody = "a".repeat(200);
-    const result = await sendOutbound({
+  test("flags an SMS body over 160 characters in the error column without failing", async () => {
+    await sendOutbound({
       channel: "SMS",
       to: "+447000000000",
       template: "booking-confirmed",
-      data: { longText: longBody },
+      data: { clubName: "x".repeat(200) },
     });
-    createdIds.push(result.id);
-    const row = await prisma.outboundMessage.findUnique({ where: { id: result.id } });
-    expect(row?.channel).toBe("SMS");
-    // Either the template body itself > 160 or our overlong fixture; the
-    // outbound layer should have flagged it.
-    if ((row?.bodyText ?? "").length > 160) {
-      expect(row?.error).toMatch(/160/);
-    }
+
+    expect(written().channel).toBe("SMS");
+    expect(written().bodyText.length).toBeGreaterThan(160);
+    expect(written().error).toMatch(/limit 160/);
+  });
+
+  test("an SMS within 160 characters has no error", async () => {
+    await sendOutbound({
+      channel: "SMS",
+      to: "+447000000000",
+      template: "booking-confirmed",
+      data: { clubName: "Burnside" },
+    });
+
+    expect(written().bodyText.length).toBeLessThanOrEqual(160);
+    expect(written().error).toBeNull();
   });
 
   test("captures social posts with the specified platform", async () => {
-    const result = await sendOutbound({
+    await sendOutbound({
       channel: "SOCIAL_POST",
       to: "page-id",
       socialPlatform: "FACEBOOK",
       template: "tenant-joined",
       data: { tenantName: "Burnside Bowls", clubName: "Burnside Bowls" },
     });
-    createdIds.push(result.id);
-    const row = await prisma.outboundMessage.findUnique({ where: { id: result.id } });
-    expect(row?.channel).toBe("SOCIAL_POST");
-    expect(row?.socialPlatform).toBe("FACEBOOK");
+
+    expect(written()).toMatchObject({ channel: "SOCIAL_POST", socialPlatform: "FACEBOOK" });
   });
 });

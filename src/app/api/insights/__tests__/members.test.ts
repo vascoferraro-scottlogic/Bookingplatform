@@ -1,259 +1,186 @@
-import { prisma } from "@/lib/prisma";
-import { NextRequest } from "next/server";
+jest.mock("@/lib/prisma", () => require("@/test-utils/prisma-mock").prismaModule);
+jest.mock("next-auth", () => require("@/test-utils/session").nextAuthModule);
 
-let mockSessionReturn: any;
+// The member statistics are computed in SQL ($queryRawUnsafe) and Prisma
+// count/groupBy, so a mock cannot check the numbers themselves — that needs a
+// real database (API test suite). These unit tests cover what the route does
+// in JavaScript: the auth/role/flag guards, the tenant scoping and period
+// window of every query, and the reshaping of rows (BigInt -> number) into the
+// response.
 
-jest.mock("@/lib/api-utils", () => {
-  const actual = jest.requireActual("@/lib/api-utils");
-  return {
-    ...actual,
-    getSessionOrFail: jest.fn(() => Promise.resolve(mockSessionReturn)),
-  };
-});
+import { prismaMock } from "@/test-utils/prisma-mock";
 
+// groupBy is a heavily overloaded generic, so its deep mock is untyped; cast it.
+const groupByMock = (model: { groupBy: unknown }) => model.groupBy as unknown as jest.Mock;
+import { signInAs } from "@/test-utils/session";
+import { request, readJson } from "@/test-utils/http";
 import { GET } from "@/app/api/insights/members/route";
 
-const stamp = Date.now();
-const cleanup: { tenantIds: string[]; userIds: string[]; bookingIds: string[]; channelIds: string[] } = {
-  tenantIds: [],
-  userIds: [],
-  bookingIds: [],
-  channelIds: [],
+const TENANT_ID = "tenant-1";
+const DAY_MS = 86_400_000;
+
+const getMembers = (params?: Record<string, string>) =>
+  GET(request(`/api/insights/members?${new URLSearchParams(params).toString()}`));
+
+const signInAsAdmin = (tenantId = TENANT_ID) => signInAs({ id: "members-admin", role: "TENANT_ADMIN", tenantId });
+
+type RawRows = {
+  byWeek?: { week: string; count: bigint }[];
+  bookers?: bigint;
+  messagers?: bigint;
+  dormant?: bigint;
+  topActive?: { user_id: string; user_name: string; booking_count: bigint; message_count: bigint; total: bigint }[];
 };
 
-let tenantId: string;
-let adminId: string;
-let activeUserId: string;
-let dormantUserId: string;
-let rinkId: string;
-
-function adminSession(tid: string, uid: string) {
-  return {
-    session: {
-      user: {
-        id: uid,
-        email: "members-admin@test.com",
-        name: "Members Admin",
-        role: "TENANT_ADMIN",
-        tenantId: tid,
-        actingAs: null,
-      },
-    },
-  };
+/** Answer each raw query by recognising its SQL. */
+function givenRawRows(rows: RawRows = {}) {
+  prismaMock.$queryRawUnsafe.mockImplementation((async (sql: string) => {
+    if (sql.includes("LEFT JOIN")) return rows.topActive ?? [];
+    if (sql.includes("NOT EXISTS")) return [{ count: rows.dormant ?? BigInt(0) }];
+    if (sql.includes("date_trunc")) return rows.byWeek ?? [];
+    if (sql.includes('FROM "Booking"')) return [{ count: rows.bookers ?? BigInt(0) }];
+    if (sql.includes('FROM "Message"')) return [{ count: rows.messagers ?? BigInt(0) }];
+    throw new Error(`unexpected query: ${sql}`);
+  }) as never);
 }
 
-function getReq(params?: Record<string, string>) {
-  const sp = new URLSearchParams(params);
-  return new NextRequest(`http://localhost/api/insights/members?${sp.toString()}`);
+beforeEach(() => {
+  prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: true } as never);
+  prismaMock.user.count.mockResolvedValue(0 as never);
+  groupByMock(prismaMock.user).mockResolvedValue([] as never);
+  givenRawRows();
+});
+
+/** The `since` the route used, read from the "new members" count. */
+function sinceUsed(): Date {
+  const newMembersCall = prismaMock.user.count.mock.calls.find(([a]) => (a as any)?.where?.createdAt);
+  return (newMembersCall![0] as any).where.createdAt.gte;
 }
-
-beforeAll(async () => {
-  // Tenant + green + rink
-  const t = await prisma.tenant.create({
-    data: { name: `Members Club ${stamp}`, slug: `members-${stamp}`, status: "ACTIVE", active: true },
-  });
-  tenantId = t.id;
-  cleanup.tenantIds.push(t.id);
-
-  const green = await prisma.green.create({
-    data: { name: "Test Green", tenantId },
-  });
-  const rink = await prisma.rink.create({
-    data: { name: "Rink A", greenId: green.id },
-  });
-  rinkId = rink.id;
-
-  // Feature flag
-  await prisma.featureFlag.upsert({
-    where: { tenantId_key: { tenantId, key: "businessInsights" } },
-    update: { enabled: true },
-    create: { tenantId, key: "businessInsights", enabled: true },
-  });
-
-  // Users
-  const admin = await prisma.user.create({
-    data: { email: `members-admin-${stamp}@test.com`, name: "Members Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId },
-  });
-  adminId = admin.id;
-  cleanup.userIds.push(admin.id);
-
-  const active = await prisma.user.create({
-    data: { email: `members-active-${stamp}@test.com`, name: "Active User", passwordHash: "x", role: "USER", tenantId },
-  });
-  activeUserId = active.id;
-  cleanup.userIds.push(active.id);
-
-  const dormant = await prisma.user.create({
-    data: {
-      email: `members-dormant-${stamp}@test.com`,
-      name: "Dormant User",
-      passwordHash: "x",
-      role: "USER",
-      tenantId,
-      createdAt: new Date(Date.now() - 180 * 86400000), // 180 days ago
-    },
-  });
-  dormantUserId = dormant.id;
-  cleanup.userIds.push(dormant.id);
-
-  // Active user has a recent booking
-  const today = new Date().toISOString().slice(0, 10);
-  const b1 = await prisma.booking.create({
-    data: {
-      tenantId,
-      userId: active.id,
-      date: today,
-      status: "CONFIRMED",
-      slots: { create: [{ rinkId, timeSlot: "10:00-12:00", greenName: "Test Green" }] },
-    },
-  });
-  cleanup.bookingIds.push(b1.id);
-
-  // Active user sent a message
-  const channel = await prisma.channel.create({
-    data: {
-      tenantId,
-      name: `test-channel-${stamp}`,
-      type: "PUBLIC",
-      createdById: admin.id,
-    },
-  });
-  cleanup.channelIds.push(channel.id);
-
-  await prisma.message.create({
-    data: {
-      channelId: channel.id,
-      tenantId,
-      userId: active.id,
-      body: "Hello from test",
-    },
-  });
-
-  // Admin also has a booking (for top active)
-  const b2 = await prisma.booking.create({
-    data: {
-      tenantId,
-      userId: admin.id,
-      date: today,
-      status: "CONFIRMED",
-      slots: { create: [{ rinkId, timeSlot: "14:00-16:00", greenName: "Test Green" }] },
-    },
-  });
-  cleanup.bookingIds.push(b2.id);
-});
-
-afterAll(async () => {
-  await prisma.message.deleteMany({ where: { channelId: { in: cleanup.channelIds } } });
-  await prisma.channelMember.deleteMany({ where: { channelId: { in: cleanup.channelIds } } });
-  await prisma.channel.deleteMany({ where: { id: { in: cleanup.channelIds } } });
-  await prisma.bookingSlot.deleteMany({ where: { bookingId: { in: cleanup.bookingIds } } });
-  await prisma.booking.deleteMany({ where: { id: { in: cleanup.bookingIds } } });
-  await prisma.featureFlag.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.auditEvent.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.rink.deleteMany({ where: { green: { tenantId: { in: cleanup.tenantIds } } } });
-  await prisma.green.deleteMany({ where: { tenantId: { in: cleanup.tenantIds } } });
-  await prisma.user.updateMany({ where: { tenantId: { in: cleanup.tenantIds } }, data: { tenantId: null } });
-  await prisma.user.deleteMany({ where: { id: { in: cleanup.userIds } } });
-  await prisma.tenant.deleteMany({ where: { id: { in: cleanup.tenantIds } } });
-  await prisma.$disconnect();
-});
 
 describe("/api/insights/members", () => {
-  beforeEach(() => {
-    mockSessionReturn = adminSession(tenantId, adminId);
-  });
-
   test("returns 401 when not authenticated", async () => {
-    const { NextResponse: NR } = await import("next/server");
-    mockSessionReturn = { error: NR.json({ error: "Unauthorized" }, { status: 401 }) };
-    const res = await GET(getReq());
+    const res = await getMembers();
     expect(res.status).toBe(401);
   });
 
   test("returns 403 for non-admin user", async () => {
-    mockSessionReturn = {
-      session: {
-        user: { id: activeUserId, email: "user@test.com", name: "User", role: "USER", tenantId, actingAs: null },
-      },
-    };
-    const res = await GET(getReq());
+    signInAs({ id: "member", role: "USER", tenantId: TENANT_ID });
+    const res = await getMembers();
     expect(res.status).toBe(403);
+    expect(prismaMock.user.count).not.toHaveBeenCalled();
+  });
+
+  test("returns 403 when the businessInsights flag is off for the tenant", async () => {
+    signInAsAdmin();
+    prismaMock.featureFlag.findUnique.mockResolvedValue({ enabled: false } as never);
+
+    const { status, body } = await readJson(await getMembers());
+
+    expect(status).toBe(403);
+    expect(body.error).toBe("Feature not enabled");
+    expect(prismaMock.featureFlag.findUnique).toHaveBeenCalledWith({
+      where: { tenantId_key: { tenantId: TENANT_ID, key: "businessInsights" } },
+    });
+    expect(prismaMock.user.count).not.toHaveBeenCalled();
   });
 
   test("returns member stats for default period (30d)", async () => {
-    const res = await GET(getReq());
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    signInAsAdmin();
+    prismaMock.user.count.mockImplementation((async (args: any) => (args.where.createdAt ? 2 : 3)) as never);
+    givenRawRows({ bookers: BigInt(2), messagers: BigInt(1), dormant: BigInt(1) });
 
+    const { status, body } = await readJson(await getMembers());
+
+    expect(status).toBe(200);
     expect(body.period).toBe("30d");
-    expect(body.totalMembers).toBe(3); // admin + active + dormant
-    expect(body.activeBookers).toBeGreaterThanOrEqual(2); // admin + active
-    expect(body.activeMessagers).toBeGreaterThanOrEqual(1); // active
+    expect(body.totalMembers).toBe(3);
+    expect(body.newMembers).toBe(2);
+    expect(body.activeBookers).toBe(2);
+    expect(body.activeMessagers).toBe(1);
+    expect(body.dormantMembers).toBe(1);
+    expect(Math.abs(sinceUsed().getTime() - (Date.now() - 30 * DAY_MS))).toBeLessThan(DAY_MS);
   });
 
-  test("returns dormant member count", async () => {
-    const res = await GET(getReq());
-    const body = await res.json();
+  test.each([
+    ["90d", 90],
+    ["7d", 7],
+    ["anything-else", 7],
+  ])("period=%s looks back %i days", async (period, days) => {
+    signInAsAdmin();
+    const { body } = await readJson(await getMembers({ period }));
 
-    // Dormant user created 180 days ago with no bookings or messages
-    expect(body.dormantMembers).toBeGreaterThanOrEqual(1);
+    expect(body.period).toBe(period);
+    expect(Math.abs(sinceUsed().getTime() - (Date.now() - days * DAY_MS))).toBeLessThan(DAY_MS);
   });
 
   test("returns role breakdown", async () => {
-    const res = await GET(getReq());
-    const body = await res.json();
+    signInAsAdmin();
+    groupByMock(prismaMock.user).mockResolvedValue([
+      { role: "USER", _count: 2 },
+      { role: "TENANT_ADMIN", _count: 1 },
+    ] as never);
 
-    expect(body.roleBreakdown.length).toBeGreaterThanOrEqual(1);
-    const roles = body.roleBreakdown.map((r: any) => r.role);
-    expect(roles).toContain("USER");
-    expect(roles).toContain("TENANT_ADMIN");
+    const { body } = await readJson(await getMembers());
+
+    expect(body.roleBreakdown).toEqual([
+      { role: "USER", count: 2 },
+      { role: "TENANT_ADMIN", count: 1 },
+    ]);
   });
 
   test("returns top active members with booking + message counts", async () => {
-    const res = await GET(getReq());
-    const body = await res.json();
+    signInAsAdmin();
+    givenRawRows({
+      topActive: [
+        { user_id: "active", user_name: "Active User", booking_count: BigInt(1), message_count: BigInt(1), total: BigInt(2) },
+        { user_id: "members-admin", user_name: "Members Admin", booking_count: BigInt(1), message_count: BigInt(0), total: BigInt(1) },
+      ],
+    });
 
-    expect(body.topActive.length).toBeGreaterThanOrEqual(1);
-    // Active user has 1 booking + 1 message = 2 total; admin has 1 booking = 1 total
-    const activeEntry = body.topActive.find((m: any) => m.name === "Active User");
-    expect(activeEntry).toBeDefined();
-    expect(activeEntry.bookings).toBe(1);
-    expect(activeEntry.messages).toBe(1);
-    expect(activeEntry.total).toBe(2);
+    const { body } = await readJson(await getMembers());
+
+    expect(body.topActive).toEqual([
+      { userId: "active", name: "Active User", bookings: 1, messages: 1, total: 2 },
+      { userId: "members-admin", name: "Members Admin", bookings: 1, messages: 0, total: 1 },
+    ]);
   });
 
-  test("returns new members count", async () => {
-    const res = await GET(getReq());
-    const body = await res.json();
+  test("returns new members grouped by week", async () => {
+    signInAsAdmin();
+    givenRawRows({ byWeek: [{ week: "w1", count: BigInt(4) }, { week: "w2", count: BigInt(1) }] });
 
-    // admin + active created recently; dormant created 180 days ago
-    expect(body.newMembers).toBe(2);
+    const { body } = await readJson(await getMembers());
+
+    expect(body.membersByWeek).toEqual([{ week: "w1", count: 4 }, { week: "w2", count: 1 }]);
   });
 
-  test("cross-tenant isolation", async () => {
-    const other = await prisma.tenant.create({
-      data: { name: `Other Members ${stamp}`, slug: `other-mem-${stamp}`, status: "ACTIVE", active: true },
-    });
-    cleanup.tenantIds.push(other.id);
+  test("count queries that return no rows report zero", async () => {
+    signInAsAdmin();
+    prismaMock.$queryRawUnsafe.mockResolvedValue([] as never);
 
-    const otherAdmin = await prisma.user.create({
-      data: { email: `other-mem-${stamp}@test.com`, name: "Other Admin", passwordHash: "x", role: "TENANT_ADMIN", tenantId: other.id },
-    });
-    cleanup.userIds.push(otherAdmin.id);
+    const { body } = await readJson(await getMembers());
 
-    await prisma.featureFlag.upsert({
-      where: { tenantId_key: { tenantId: other.id, key: "businessInsights" } },
-      update: { enabled: true },
-      create: { tenantId: other.id, key: "businessInsights", enabled: true },
-    });
-
-    mockSessionReturn = adminSession(other.id, otherAdmin.id);
-    const res = await GET(getReq());
-    const body = await res.json();
-
-    expect(body.totalMembers).toBe(1); // just the other admin
     expect(body.activeBookers).toBe(0);
     expect(body.activeMessagers).toBe(0);
+    expect(body.dormantMembers).toBe(0);
     expect(body.topActive).toEqual([]);
+  });
+
+  test("scopes every query to the caller's tenant", async () => {
+    signInAsAdmin("tenant-2");
+    await getMembers();
+
+    for (const [args] of prismaMock.user.count.mock.calls) {
+      expect((args as any).where).toMatchObject({ tenantId: "tenant-2", suspended: false });
+    }
+    expect(prismaMock.user.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: "tenant-2", suspended: false } }),
+    );
+    const rawCalls = prismaMock.$queryRawUnsafe.mock.calls;
+    expect(rawCalls).toHaveLength(5);
+    for (const [sql, firstParam] of rawCalls) {
+      expect(sql).toContain('"tenantId" = $1');
+      expect(firstParam).toBe("tenant-2");
+    }
   });
 });
