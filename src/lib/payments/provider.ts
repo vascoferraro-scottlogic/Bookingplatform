@@ -21,4 +21,6 @@ export interface PaymentProvider {
   chargeTenantPayment(tenantPaymentId: string): Promise<ChargeResult>;
   handleWebhookEvent(body: any, headers?: Record<string, string | string[]>): Promise<void>;
   refundPayment(paymentId: string, amount?: number): Promise<RefundResult>;
+  /** Refund a booking payment (BookingPayment id). The caller records the outcome. */
+  refundBookingPayment(bookingPaymentId: string, amount?: number): Promise<RefundResult>;
 }

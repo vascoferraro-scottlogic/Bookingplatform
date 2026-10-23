@@ -89,9 +89,10 @@ export const providerPaymentEngine: PaymentEngine = {
       return { success: false, error: String(err) };
     }
   },
+  /** `paymentId` is a BookingPayment id. */
   async refund({ paymentId, amount }) {
     try {
-      const result = await paymentProvider.refundPayment(paymentId, amount);
+      const result = await paymentProvider.refundBookingPayment(paymentId, amount);
       return { success: result.success, error: result.success ? undefined : "refund failed" };
     } catch (err) {
       return { success: false, error: String(err) };

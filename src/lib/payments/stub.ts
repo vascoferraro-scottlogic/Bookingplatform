@@ -1,4 +1,4 @@
-import type { PaymentProvider, CreateCheckoutResult, ChargeResult } from "./provider";
+import type { PaymentProvider, CreateCheckoutResult, ChargeResult, RefundResult } from "./provider";
 import { prisma } from "@/lib/prisma";
 
 const MODE = process.env.PAYMENT_STUB_MODE ?? "immediate"; // immediate | webhook | manual
@@ -90,5 +90,10 @@ export class StubPaymentProvider implements PaymentProvider {
     } catch (e) {
       return { success: false };
     }
+  }
+
+  async refundBookingPayment(bookingPaymentId: string, _amount?: number): Promise<RefundResult> {
+    // The stub has no external provider to call; the booking route records the outcome.
+    return { success: true, providerId: `refund_${bookingPaymentId}` };
   }
 }
