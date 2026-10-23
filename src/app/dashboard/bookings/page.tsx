@@ -136,6 +136,21 @@ export default function BookingsPage() {
     return bookingStart(b).getTime() <= Date.now();
   }
 
+  async function payBooking(id: string) {
+    const res = await fetch(`/api/bookings/${id}/checkout`, { method: "POST" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(body.error ?? "Payment failed");
+      return;
+    }
+    if (body.checkoutUrl) {
+      window.location.href = body.checkoutUrl;
+      return;
+    }
+    setSuccessMsg(body.status === "PAID" ? "Payment completed!" : "Payment started.");
+    loadData(selectedTenant || undefined);
+  }
+
   async function updateStatus(id: string, status: string) {
     const res = await fetch(`/api/bookings/${id}`, {
       method: "PATCH",
@@ -319,18 +334,9 @@ export default function BookingsPage() {
                 {!isAdmin && canMemberCancel(b) && (
                   <button onClick={() => updateStatus(b.id, "CANCELLED")} className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200">Cancel</button>
                 )}
-                {b.status === "RESERVED" && b.payment?.status === "PENDING" && (
+                {b.status === "CONFIRMED" && b.payment?.status === "PENDING" && (
                   <button
-                    onClick={async () => {
-                      const res = await fetch(`/api/bookings/${b.id}/checkout`, { method: "POST" });
-                      if (res.ok) {
-                        setSuccessMsg("Payment completed!");
-                        loadData(selectedTenant || undefined);
-                      } else {
-                        const err = await res.json().catch(() => ({}));
-                        alert(err.error ?? "Payment failed");
-                      }
-                    }}
+                    onClick={() => payBooking(b.id)}
                     className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
                   >
                     Pay £{((b.payment?.amount ?? 0) / 100).toFixed(2)}
