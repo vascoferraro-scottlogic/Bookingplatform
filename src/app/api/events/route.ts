@@ -5,6 +5,7 @@ import { hasRole } from "@/lib/roles";
 import { resolveTenantId } from "@/lib/tenant";
 import { isFeatureEnabled } from "@/lib/features";
 import { logAudit } from "@/lib/audit";
+import { validateNonNegativeNumber } from "@/lib/event-validation";
 
 const VALID_CATEGORIES = ["SOCIAL", "COMPETITION", "LEAGUE", "OPEN_DAY", "TOURNAMENT", "OTHER"] as const;
 const VALID_FORMATS = ["KNOCKOUT", "AMERICAN", "LEAGUE_FORMAT", "CANADIAN", "OTHER_FORMAT"] as const;
@@ -43,11 +44,30 @@ export async function GET(req: NextRequest) {
   let externalEvents: typeof events = [];
   const showExternal = await isFeatureEnabled(tenantId, "eventsShowExternal");
   if (showExternal) {
-    // Find tenants that share externally
-    const sharingFlags = await prisma.featureFlag.findMany({
-      where: { key: "eventsShareExternal", enabled: true, tenantId: { not: tenantId } },
-      select: { tenantId: true },
+    // Partners = clubs sharing an ACTIVE federation membership with this club (D-07)
+    const ownMemberships = await prisma.federationMembership.findMany({
+      where: { tenantId, leftAt: null, federation: { status: "ACTIVE" } },
+      select: { federationId: true },
     });
+    const partnerMemberships = ownMemberships.length
+      ? await prisma.federationMembership.findMany({
+          where: {
+            federationId: { in: ownMemberships.map((m) => m.federationId) },
+            tenantId: { not: tenantId },
+            leftAt: null,
+          },
+          select: { tenantId: true },
+        })
+      : [];
+    const partnerIds = [...new Set(partnerMemberships.map((m) => m.tenantId))];
+
+    // ...that have opted in to sharing outbound
+    const sharingFlags = partnerIds.length
+      ? await prisma.featureFlag.findMany({
+          where: { key: "eventsShareExternal", enabled: true, tenantId: { in: partnerIds } },
+          select: { tenantId: true },
+        })
+      : [];
     const sharingTenantIds = sharingFlags.map((f) => f.tenantId);
 
     if (sharingTenantIds.length > 0) {
@@ -108,6 +128,8 @@ export async function POST(req: NextRequest) {
   if (visibility && !VALID_VISIBILITIES.includes(visibility)) {
     return jsonError(`Invalid visibility. Must be one of: ${VALID_VISIBILITIES.join(", ")}`);
   }
+  const numberErr = validateNonNegativeNumber(capacity, "capacity") ?? validateNonNegativeNumber(entryFee, "entryFee");
+  if (numberErr) return jsonError(numberErr);
   if (endTime && startTime && endTime <= startTime) {
     return jsonError("End time must be after start time");
   }

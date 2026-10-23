@@ -5,6 +5,7 @@ import { hasRole } from "@/lib/roles";
 import { resolveTenantId } from "@/lib/tenant";
 import { isFeatureEnabled } from "@/lib/features";
 import { logAudit } from "@/lib/audit";
+import { validateNonNegativeNumber } from "@/lib/event-validation";
 
 const VALID_CATEGORIES = ["SOCIAL", "COMPETITION", "LEAGUE", "OPEN_DAY", "TOURNAMENT", "OTHER"] as const;
 const VALID_FORMATS = ["KNOCKOUT", "AMERICAN", "LEAGUE_FORMAT", "CANADIAN", "OTHER_FORMAT"] as const;
@@ -28,8 +29,14 @@ export async function GET(req: NextRequest, { params }: Params) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
+  const flagOn = await isFeatureEnabled(tenantId, "events");
+  if (!flagOn) return jsonError("Events feature is not enabled for this tenant", 403);
+
+  // Only admins can see DRAFT events
+  const isAdmin = hasRole(getEffective(session).role, "TENANT_ADMIN");
+
   const event = await prisma.event.findFirst({
-    where: { id, tenantId },
+    where: { id, tenantId, ...(!isAdmin ? { status: "PUBLISHED" } : {}) },
     include: {
       tenant: { select: { id: true, name: true, slug: true } },
       createdBy: { select: { id: true, name: true } },
@@ -89,6 +96,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (visibility && !VALID_VISIBILITIES.includes(visibility)) {
     return jsonError(`Invalid visibility. Must be one of: ${VALID_VISIBILITIES.join(", ")}`);
   }
+  const numberErr = validateNonNegativeNumber(capacity, "capacity") ?? validateNonNegativeNumber(entryFee, "entryFee");
+  if (numberErr) return jsonError(numberErr);
   const effectiveStart = startTime ?? existing.startTime;
   const effectiveEnd = endTime !== undefined ? endTime : existing.endTime;
   if (effectiveEnd && effectiveStart && effectiveEnd <= effectiveStart) {
@@ -141,7 +150,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   return NextResponse.json(event);
 }
 
-/** DELETE — hard-delete drafts, unpublish (set DRAFT) anything else. TENANT_ADMIN+ only. */
+/** DELETE — hard-delete drafts; a PUBLISHED event must be unpublished first (D-12). TENANT_ADMIN+ only. */
 export async function DELETE(req: NextRequest, { params }: Params) {
   const { id } = await params;
   const { session, error } = await getSessionOrFail();
@@ -163,12 +172,5 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     return NextResponse.json({ deleted: true });
   }
 
-  // Non-draft: unpublish instead of hard delete
-  const event = await prisma.event.update({
-    where: { id },
-    data: { status: "DRAFT", updatedById: session.user.id },
-  });
-
-  logAudit({ session, action: "event.unpublished", entity: "Event", entityId: id, tenantId });
-  return NextResponse.json(event);
+  return jsonError("A published event can't be deleted. Unpublish it first.", 409);
 }

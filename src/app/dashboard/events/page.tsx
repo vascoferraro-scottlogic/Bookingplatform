@@ -218,6 +218,7 @@ export default function EventsPage() {
         body: JSON.stringify(payload),
       });
       if (res.ok) { flash("Event updated"); setShowForm(false); loadEvents(selectedTenant || undefined); }
+      else { const data = await res.json().catch(() => ({})); setFormError(data.error ?? "Failed to update event"); }
     } else {
       const res = await fetch(`/api/events${qs}`, {
         method: "POST",
@@ -225,6 +226,7 @@ export default function EventsPage() {
         body: JSON.stringify(payload),
       });
       if (res.ok) { flash("Event created"); setShowForm(false); loadEvents(selectedTenant || undefined); }
+      else { const data = await res.json().catch(() => ({})); setFormError(data.error ?? "Failed to create event"); }
     }
   }
 
@@ -250,6 +252,7 @@ export default function EventsPage() {
     const qs = selectedTenant ? `?tenantId=${encodeURIComponent(selectedTenant)}` : "";
     const res = await fetch(`/api/events/${id}${qs}`, { method: "DELETE" });
     if (res.ok) { flash("Event removed"); loadEvents(selectedTenant || undefined); }
+    else { const data = await res.json().catch(() => ({})); alert(data.error ?? "Failed to delete event"); }
   }
 
   function formatFee(pence: number, curr: string) {
@@ -455,7 +458,7 @@ export default function EventsPage() {
                     )}
 
                     {isAdmin && <button onClick={() => openEdit(ev)} className="px-2 py-0.5 rounded border hover:bg-gray-100 text-xs">Edit</button>}
-                    {isAdmin && <button onClick={() => handleDelete(ev.id)} className="px-2 py-0.5 rounded border border-red-300 text-red-600 hover:bg-red-50 text-xs">Delete</button>}
+                    {isAdmin && ev.status === "DRAFT" && <button onClick={() => handleDelete(ev.id)} className="px-2 py-0.5 rounded border border-red-300 text-red-600 hover:bg-red-50 text-xs">Delete</button>}
                   </div>
                 </div>
               ))}
