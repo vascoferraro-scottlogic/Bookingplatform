@@ -14,6 +14,7 @@ import {
   type MaintenanceTaskCreatePayload,
 } from "@/lib/agent/committers/maintenance-task-create";
 import { clusterMessages } from "@/lib/agent/clustering";
+import { logAudit } from "@/lib/audit";
 
 interface DetectionConfig {
   sensitivityThreshold: number;
@@ -29,6 +30,17 @@ interface DetectionConfig {
   maxTasksPerRun: number;
   monitorPrivateChannels: boolean;
 }
+
+/**
+ * Triage categories that produce a proposal (D-14, FR-AGT-001): safety,
+ * facility and grounds issues. RINK_SURFACE is a grounds issue.
+ */
+const TRIAGE_CATEGORIES: TaskCategory[] = [
+  TaskCategory.SAFETY,
+  TaskCategory.FACILITIES,
+  TaskCategory.GROUNDS,
+  TaskCategory.RINK_SURFACE,
+];
 
 const DEFAULTS: DetectionConfig = {
   sensitivityThreshold: 0.6,
@@ -179,6 +191,17 @@ export class DetectionAgent extends BaseAgent {
       ),
     ].join("\n");
 
+    // Member names, emails and message bodies leave the platform in this call: flag it (FR-AUD-002).
+    logAudit({
+      session: { user: { id: definition.systemUserId, role: "USER", tenantId } },
+      action: "agent.llm_call",
+      entity: "AgentRun",
+      entityId: run.id,
+      tenantId,
+      piiAccess: true,
+      meta: { agent: this.slug, messageCount: messages.length },
+    });
+
     let llmResponse: LLMResponse;
     try {
       const result = await this.provider.call({
@@ -221,7 +244,10 @@ export class DetectionAgent extends BaseAgent {
         .map((id) => classifyById.get(id))
         .filter((c): c is LLMComplaint => !!c);
       const eligibleMembers = memberClassifications.filter(
-        (c) => c.isComplaint && (c.confidence ?? 0) >= config.sensitivityThreshold,
+        (c) =>
+          c.isComplaint &&
+          (c.confidence ?? 0) >= config.sensitivityThreshold &&
+          TRIAGE_CATEGORIES.includes(parseCategory(c.category)),
       );
 
       if (eligibleMembers.length === 0) {
@@ -308,7 +334,10 @@ export class DetectionAgent extends BaseAgent {
     }
 
     const eligibleComplaints = (llmResponse.complaints ?? []).filter(
-      (c) => c.isComplaint && (c.confidence ?? 0) >= config.sensitivityThreshold,
+      (c) =>
+        c.isComplaint &&
+        (c.confidence ?? 0) >= config.sensitivityThreshold &&
+        TRIAGE_CATEGORIES.includes(parseCategory(c.category)),
     );
 
     const newest = messages[messages.length - 1];
