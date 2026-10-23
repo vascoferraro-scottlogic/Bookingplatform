@@ -96,6 +96,7 @@ model User {
   createdAt                  DateTime              @default(now())
   updatedAt                  DateTime              @updatedAt
   isPlatformAdmin            Boolean               @default(false)
+  passwordChangedAt          DateTime?
   profession                 String?
   qualifications             String?
   specialisms                String?

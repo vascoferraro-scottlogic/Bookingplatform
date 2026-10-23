@@ -89,6 +89,14 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async jwt({ token, user, trigger, session }) {
+      // Session revocation (B-02): a token issued before the user's last
+      // password change is dead. Returning an empty token drops the session.
+      if (!user && token.sub && typeof token.iat === "number") {
+        const row = await prisma.user.findUnique({ where: { id: token.sub as string }, select: { passwordChangedAt: true } });
+        if (row?.passwordChangedAt && Math.floor(row.passwordChangedAt.getTime() / 1000) > token.iat) {
+          return { revoked: true } as unknown as typeof token;
+        }
+      }
       if (user) {
         token.role = (user as any).role;
         token.tenantId = (user as any).tenantId;
@@ -153,6 +161,10 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
+      if (!token.sub) {
+        // Revoked token (see jwt callback): no user, so every route sees "signed out".
+        return { expires: session.expires } as typeof session;
+      }
       if (session.user) {
         (session.user as any).id = token.sub;
         (session.user as any).role = token.role;

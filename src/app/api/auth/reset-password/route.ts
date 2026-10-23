@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   const consumed = await prisma.$transaction(async (tx) => {
     const { count } = await tx.passwordResetToken.deleteMany({ where: { token, expiresAt: { gt: new Date() } } });
     if (count !== 1) return false;
-    await tx.user.update({ where: { id: record.userId }, data: { passwordHash } });
+    await tx.user.update({ where: { id: record.userId }, data: { passwordHash, passwordChangedAt: new Date() } });
     // Any other outstanding tokens for this user are now void too.
     await tx.passwordResetToken.deleteMany({ where: { userId: record.userId } });
     return true;
