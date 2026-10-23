@@ -112,3 +112,66 @@ Decided 23 Oct 2026.
   - The UI shows translated labels, not raw codes.
   - The requirement wording is not changed.
 - **Basis:** Judgement.
+
+## D-10 — Who can create channels?
+
+- **Requirements:** FR-MSG-003
+- **Question:** FR-MSG-003 lets a tenant admin create, rename and delete channels. Can other members do the same?
+- **Decision:** Only tenant admins (effective role) can create, rename or delete channels. Members still post in channels and use direct messages.
+- **Basis:** Judgement. The text grants the ability to admins but doesn't say *only* admins.
+
+## D-11 — What maintenance staff see
+
+- **Requirements:** FR-MNT-003, FR-MNT-001
+- **Question:** Which tasks appear in a maintenance user's list?
+- **Decision:**
+  - Maintenance staff see **only tasks assigned to them**.
+  - Tenant admins see all of the tenant's tasks.
+  - Members keep the task visibility model (PUBLIC / MEMBERS / MAINTENANCE_ONLY) for tasks they can see.
+  - "Assign" must name an assignee who holds a maintenance role in the tenant.
+- **Basis:** Text. FR-MNT-003 says "only their own assigned tasks".
+
+## D-12 — Deleting a published event
+
+- **Requirements:** FR-EVT-002
+- **Question:** What does DELETE do to a PUBLISHED event?
+- **Decision:**
+  - A DRAFT event is deleted.
+  - A PUBLISHED event can't be deleted (409 "unpublish first"). It must be returned to DRAFT first.
+- **Basis:** Judgement. The two-state lifecycle doesn't define deletion.
+
+## D-13 — When a booking is "past" for no-show marking
+
+- **Requirements:** FR-BOOK-014
+- **Question:** From when can a confirmed booking be marked as a no-show?
+- **Decision:** From the **slot start time** (date plus time slot, club timezone, D-05). Before that, it is refused.
+- **Basis:** Judgement on "a past confirmed booking".
+
+## D-14 — Triage agent categories
+
+- **Requirements:** FR-AGT-001, FR-AGT-010
+- **Question:** Which messages does the triage (detection) agent turn into maintenance-task proposals?
+- **Decision:**
+  - Only messages classified as **safety, facility or grounds** issues produce a proposal.
+  - Proposals still need human approval (FR-AGT-010).
+- **Basis:** Text (FR-AGT-001). The FR-AGT-010 note about writing tasks directly is stale.
+
+## D-15 — Impersonation expiry
+
+- **Requirements:** FR-SEC-004, FR-SEC-006
+- **Question:** How long does an impersonation last?
+- **Decision:**
+  - At most **8 hours** from its start, or until it is ended, whichever comes first.
+  - Every request re-validates the claim against the open Impersonation record.
+- **Basis:** Judgement. The requirements are silent.
+
+## D-16 — Registering with an email that already exists
+
+- **Requirements:** FR-AUTH-001, NFR-05
+- **Question:** Should registration hide whether an email is already registered?
+- **Decision:**
+  - Registration keeps a clear "already registered" response (409), for usability.
+  - Emails are compared case-insensitively and stored in lower case.
+  - Password and email rules apply.
+  - Forgot-password **does** hide whether an account exists (FR-AUTH-003).
+- **Basis:** Judgement, balancing NFR-05 against usability.
