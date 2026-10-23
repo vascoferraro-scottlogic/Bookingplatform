@@ -213,3 +213,55 @@ describe("PATCH /api/bookings/[id] - no-show marking", () => {
     );
   });
 });
+
+describe("PATCH /api/bookings/[id] - cancelling a booking made at a partner club", () => {
+  const AWAY = "tenant-away";
+  const SLOT_START = `${WINTER_DATE}T10:00:00.000Z`;
+  const partnerBooking = (over: Record<string, unknown> = {}) =>
+    givenBooking({ tenantId: AWAY, bookedByTenantId: TENANT, federationId: "fed-1", tenant: { id: AWAY, timezone: "Europe/London" }, ...over });
+
+  test("[B-55] FR-BOOK-017 – a home member cancels their own partner-club booking 49h before the slot → 200", async () => {
+    signInAs(USER);
+    partnerBooking();
+    nowIs(hoursBefore(SLOT_START, 49));
+
+    const { status } = await readJson(await patch("CANCELLED"));
+
+    expect(status).toBe(200);
+    expect(prismaMock.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }),
+    );
+  });
+
+  test("[B-55] FR-BOOK-017 – the same 48h rule applies: 47h before the slot → 403", async () => {
+    signInAs(USER);
+    partnerBooking();
+    nowIs(hoursBefore(SLOT_START, 47));
+
+    const { status } = await readJson(await patch("CANCELLED"));
+
+    expect(status).toBe(403);
+    expect(prismaMock.booking.update).not.toHaveBeenCalled();
+  });
+
+  test("[B-55] FR-BOOK-017 – a home TENANT_ADMIN gets no admin override of the 48h rule at the partner club", async () => {
+    signInAs(ADMIN);
+    partnerBooking({ userId: ADMIN.id });
+    nowIs(hoursBefore(SLOT_START, 47));
+
+    const { status } = await readJson(await patch("CANCELLED"));
+
+    expect(status).toBe(403);
+  });
+
+  test("[B-55] FR-BOOK-017 – another home member can't cancel someone else's partner-club booking", async () => {
+    signInAs({ id: "user-9", role: "USER", tenantId: TENANT });
+    partnerBooking();
+    nowIs(hoursBefore(SLOT_START, 49));
+
+    const { status } = await readJson(await patch("CANCELLED"));
+
+    expect(status).toBe(403);
+    expect(prismaMock.booking.update).not.toHaveBeenCalled();
+  });
+});

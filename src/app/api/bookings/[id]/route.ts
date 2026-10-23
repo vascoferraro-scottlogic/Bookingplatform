@@ -38,14 +38,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // Tenant isolation: must be same tenant via real membership OR active impersonation.
   // A non-impersonating PLATFORM_ADMIN no longer has cross-tenant power here.
   const eff = getEffective(session);
-  if (booking.tenantId !== eff.tenantId) {
+  // Exception: a member may cancel their own booking made at a partner club
+  // (federation); it is recorded against their home club (FR-BOOK-017).
+  const isHomeCancel =
+    newStatus === "CANCELLED" &&
+    !!booking.bookedByTenantId &&
+    booking.bookedByTenantId === eff.tenantId &&
+    booking.userId === session.user.id;
+  if (booking.tenantId !== eff.tenantId && !isHomeCancel) {
     if (session.user.role === "PLATFORM_ADMIN" && !eff.isImpersonating) {
       return jsonError("PLATFORM_ADMIN_NO_CONTEXT", 403);
     }
     return jsonError("Forbidden", 403);
   }
 
-  const isTenantAdmin = eff.role === "TENANT_ADMIN";
+  // Admin powers apply only at the booking's own club, not at a partner club.
+  const isTenantAdmin = eff.role === "TENANT_ADMIN" && booking.tenantId === eff.tenantId;
   const slotStart = bookingStart(booking, booking.tenant?.timezone);
 
   // Only members with bookings management privileges can approve/reserve/confirm
