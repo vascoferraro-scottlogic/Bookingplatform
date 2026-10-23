@@ -36,7 +36,7 @@
     "swap": "node bin/swap.mjs",
     "flags:migrate": "npx tsx scripts/migrate-flags-to-unleash.ts",
     "flags:parity": "npx tsx scripts/check-flag-parity.ts",
-    "check:i18n": "scripts/check-i18n-coverage.sh",
+    "check:i18n": "node scripts/check-i18n-coverage.mjs",
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch"
   },
