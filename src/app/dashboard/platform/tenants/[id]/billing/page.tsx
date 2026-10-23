@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { useLocale } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { formatShortRef } from "@/lib/refs";
 import { formatDate } from "@/lib/format";
 import Link from "next/link";
@@ -48,6 +48,7 @@ const statusBadge: Record<string, string> = {
 export default function TenantBillingPage() {
   const { id } = useParams<{ id: string }>();
   const locale = useLocale();
+  const t = useTranslations("billing.tenantBilling");
   const [data, setData] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -73,23 +74,23 @@ export default function TenantBillingPage() {
     });
     const result = await res.json();
     if (res.ok) {
-      setMsg(result.generated > 0 ? `Invoice generated (£${(result.results[0].amount / 100).toFixed(2)})` : "No invoice due");
+      setMsg(result.generated > 0 ? t("invoiceGenerated", { amount: (result.results[0].amount / 100).toFixed(2) }) : t("noInvoiceDue"));
       load();
     } else {
-      setMsg("Generation failed");
+      setMsg(t("generationFailed"));
     }
     setBusy(false);
   }
 
-  if (loading) return <p className="text-gray-500">Loading billing…</p>;
+  if (loading) return <p className="text-gray-500">{t("loadingBilling")}</p>;
 
   const profile = data?.profile;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href={`/dashboard/platform/tenants/${id}`} className="text-sm text-blue-600 hover:underline">← Back to tenant</Link>
-        <h1 className="text-2xl font-bold">Tenant Billing</h1>
+        <Link href={`/dashboard/platform/tenants/${id}`} className="text-sm text-blue-600 hover:underline">{t("backToTenant")}</Link>
+        <h1 className="text-2xl font-bold">{t("title")}</h1>
       </div>
 
       {/* Profile Card */}
@@ -102,27 +103,27 @@ export default function TenantBillingPage() {
             </span>
           </div>
           <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-            <div><dt className="text-gray-500">Monthly</dt><dd>£{(profile.plan.priceMonthlyPence / 100).toFixed(2)}</dd></div>
-            <div><dt className="text-gray-500">Method</dt><dd>{profile.paymentMethod}</dd></div>
-            <div><dt className="text-gray-500">Period End</dt><dd>{formatDate(profile.currentPeriodEnd, locale)}</dd></div>
-            {profile.trialEndsAt && <div><dt className="text-gray-500">Trial Ends</dt><dd>{formatDate(profile.trialEndsAt, locale)}</dd></div>}
+            <div><dt className="text-gray-500">{t("monthly")}</dt><dd>£{(profile.plan.priceMonthlyPence / 100).toFixed(2)}</dd></div>
+            <div><dt className="text-gray-500">{t("method")}</dt><dd>{profile.paymentMethod}</dd></div>
+            <div><dt className="text-gray-500">{t("periodEnd")}</dt><dd>{formatDate(profile.currentPeriodEnd, locale)}</dd></div>
+            {profile.trialEndsAt && <div><dt className="text-gray-500">{t("trialEnds")}</dt><dd>{formatDate(profile.trialEndsAt, locale)}</dd></div>}
           </dl>
           {profile.billingContactEmail && (
-            <p className="text-xs text-gray-500">Contact: {profile.billingContactName} ({profile.billingContactEmail})</p>
+            <p className="text-xs text-gray-500">{t("contact", { name: profile.billingContactName ?? "", email: profile.billingContactEmail })}</p>
           )}
         </div>
       ) : (
-        <p className="text-gray-400">No billing profile.</p>
+        <p className="text-gray-400">{t("noBillingProfile")}</p>
       )}
 
       {/* Summary + Actions */}
       <div className="flex flex-wrap items-center gap-4">
         <div className="rounded-xl bg-white p-4 shadow">
-          <p className="text-xs text-gray-500">Total Revenue</p>
+          <p className="text-xs text-gray-500">{t("totalRevenue")}</p>
           <p className="text-lg font-semibold">£{((data?.totalRevenue ?? 0) / 100).toFixed(2)}</p>
         </div>
         <div className="rounded-xl bg-white p-4 shadow">
-          <p className="text-xs text-gray-500">Outstanding</p>
+          <p className="text-xs text-gray-500">{t("outstanding")}</p>
           <p className="text-lg font-semibold">£{((data?.outstanding ?? 0) / 100).toFixed(2)}</p>
         </div>
         <button
@@ -130,23 +131,23 @@ export default function TenantBillingPage() {
           disabled={busy || !profile}
           className="rounded bg-green-600 px-4 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50"
         >
-          Generate Invoice
+          {t("generateInvoice")}
         </button>
         {msg && <span className="text-sm text-gray-600">{msg}</span>}
       </div>
 
       {/* Payment History */}
       <div className="rounded-xl bg-white shadow">
-        <h3 className="border-b px-4 py-3 text-sm font-semibold text-gray-700">Payment History</h3>
+        <h3 className="border-b px-4 py-3 text-sm font-semibold text-gray-700">{t("paymentHistory")}</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
-                <th className="px-4 py-3">Ref</th>
-                <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Period</th>
-                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">{t("ref")}</th>
+                <th className="px-4 py-3">{t("amount")}</th>
+                <th className="px-4 py-3">{t("status")}</th>
+                <th className="px-4 py-3">{t("period")}</th>
+                <th className="px-4 py-3">{t("date")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -164,7 +165,7 @@ export default function TenantBillingPage() {
                 </tr>
               ))}
               {(data?.payments ?? []).length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-3 text-center text-gray-400">No payments yet</td></tr>
+                <tr><td colSpan={5} className="px-4 py-3 text-center text-gray-400">{t("noPayments")}</td></tr>
               )}
             </tbody>
           </table>

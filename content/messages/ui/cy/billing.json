@@ -34,7 +34,11 @@
     "status": "[cy] Status",
     "period": "[cy] Period",
     "date": "[cy] Date",
-    "noPayments": "[cy] No payments yet"
+    "noPayments": "[cy] No payments yet",
+    "invoiceGenerated": "[cy] Invoice generated (£{amount})",
+    "noInvoiceDue": "[cy] No invoice due",
+    "generationFailed": "[cy] Generation failed",
+    "contact": "[cy] Contact: {name} ({email})"
   },
   "title": "[cy] Billing",
   "loading": "[cy] Loading billing…",

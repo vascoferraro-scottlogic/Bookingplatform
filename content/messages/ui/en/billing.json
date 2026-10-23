@@ -34,7 +34,11 @@
     "status": "Status",
     "period": "Period",
     "date": "Date",
-    "noPayments": "No payments yet"
+    "noPayments": "No payments yet",
+    "invoiceGenerated": "Invoice generated (£{amount})",
+    "noInvoiceDue": "No invoice due",
+    "generationFailed": "Generation failed",
+    "contact": "Contact: {name} ({email})"
   },
   "title": "Billing",
   "loading": "Loading billing…",

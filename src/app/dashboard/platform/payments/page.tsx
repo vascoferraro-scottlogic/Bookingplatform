@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { formatShortRef } from "@/lib/refs";
 
 interface TenantPayment {
@@ -22,6 +23,7 @@ interface BookingPayment {
 }
 
 export default function PlatformPaymentsPage() {
+  const t = useTranslations("admin.platform.paymentsConsole");
   type Tenant = { id: string; name?: string | null; slug?: string | null };
   type BookingOption = { id: string; date?: string | null };
 
@@ -96,13 +98,13 @@ export default function PlatformPaymentsPage() {
     }
   }
 
-  if (loading) return <p className="text-gray-500">Loading payments…</p>;
+  if (loading) return <p className="text-gray-500">{t("loading")}</p>;
 
   return (
     <div className="space-y-6">
       {/* Manual stub controls */}
       <div className="rounded-xl bg-white p-4 shadow">
-        <h3 className="text-sm font-semibold mb-3">Manual Stub — Create Payment</h3>
+        <h3 className="text-sm font-semibold mb-3">{t("manualStub")}</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <form onSubmit={async (e) => {
             e.preventDefault();
@@ -121,15 +123,15 @@ export default function PlatformPaymentsPage() {
             } finally { setLoading(false); }
           }}>
             <div className="grid gap-2">
-              <label className="text-xs text-gray-500">Tenant ID</label>
+              <label className="text-xs text-gray-500">{t("tenantId")}</label>
               <select name="tenantId" className="rounded border px-3 py-2 text-sm">
-                <option value="">— select tenant —</option>
+                <option value="">{t("selectTenant")}</option>
                 {tenants.map((t) => (<option key={t.id} value={t.id}>{t.name ?? t.id}{t.slug ? ` (/${t.slug})` : ''}</option>))}
               </select>
-              <label className="text-xs text-gray-500">Amount (£)</label>
+              <label className="text-xs text-gray-500">{t("amount")}</label>
               <input name="amount" type="number" step="0.01" className="rounded border px-3 py-2 text-sm" />
-              <label className="flex items-center gap-2"><input name="processNow" type="checkbox" /> Process now (invoke stub)</label>
-              <div><button type="submit" className="rounded bg-blue-600 px-3 py-1 text-sm text-white">Create Tenant Payment</button></div>
+              <label className="flex items-center gap-2"><input name="processNow" type="checkbox" /> {t("processNowStub")}</label>
+              <div><button type="submit" className="rounded bg-blue-600 px-3 py-1 text-sm text-white">{t("createTenantPayment")}</button></div>
             </div>
           </form>
 
@@ -151,15 +153,15 @@ export default function PlatformPaymentsPage() {
             } finally { setLoading(false); }
           }}>
             <div className="grid gap-2">
-              <label className="text-xs text-gray-500">Tenant (for booking lookup)</label>
+              <label className="text-xs text-gray-500">{t("tenantForLookup")}</label>
               <select name="tenantId" value={selectedTenantForBooking} onChange={(e) => setSelectedTenantForBooking(e.target.value)} className="rounded border px-3 py-2 text-sm">
-                <option value="">— optional —</option>
+                <option value="">{t("optional")}</option>
                 {tenants.map((t) => (<option key={t.id} value={t.id}>{t.name ?? t.id}{t.slug ? ` (/${t.slug})` : ''}</option>))}
               </select>
-              <label className="text-xs text-gray-500">Booking ID</label>
+              <label className="text-xs text-gray-500">{t("bookingId")}</label>
               {selectedTenantForBooking ? (
                 <select name="bookingId" className="rounded border px-3 py-2 text-sm">
-                  <option value="">— select booking —</option>
+                  <option value="">{t("selectBooking")}</option>
                   {tenantBookings.map((b) => (
                     <option key={b.id} value={b.id}>{b.date ? `${new Date(b.date).toLocaleString()} — ${formatShortRef(b.id)}` : formatShortRef(b.id)}</option>
                   ))}
@@ -167,48 +169,48 @@ export default function PlatformPaymentsPage() {
               ) : (
                 <input name="bookingId" className="rounded border px-3 py-2 text-sm" />
               )}
-              <label className="text-xs text-gray-500">Amount (£)</label>
+              <label className="text-xs text-gray-500">{t("amount")}</label>
               <input name="amount" type="number" step="0.01" className="rounded border px-3 py-2 text-sm" />
-              <label className="flex items-center gap-2"><input name="processNow" type="checkbox" /> Process now (mark paid)</label>
-              <div><button type="submit" className="rounded bg-blue-600 px-3 py-1 text-sm text-white">Create Booking Payment</button></div>
+              <label className="flex items-center gap-2"><input name="processNow" type="checkbox" /> {t("processNowPaid")}</label>
+              <div><button type="submit" className="rounded bg-blue-600 px-3 py-1 text-sm text-white">{t("createBookingPayment")}</button></div>
             </div>
           </form>
         </div>
       </div>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Platform Payments (Admin)</h1>
+        <h1 className="text-2xl font-bold">{t("heading")}</h1>
         <div>
-          <button onClick={load} className="rounded border px-3 py-1 text-sm">Refresh</button>
+          <button onClick={load} className="rounded border px-3 py-1 text-sm">{t("refresh")}</button>
         </div>
       </div>
 
       <div className="rounded-xl bg-white shadow">
-        <h2 className="border-b px-4 py-3 text-sm font-semibold text-gray-700">Tenant Invoices (Pending)</h2>
+        <h2 className="border-b px-4 py-3 text-sm font-semibold text-gray-700">{t("tenantInvoicesPending")}</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
-                <th className="px-4 py-3">Ref</th>
-                <th className="px-4 py-3">Tenant</th>
+                <th className="px-4 py-3">{t("ref")}</th>
+                <th className="px-4 py-3">{t("tenant")}</th>
                 <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Action</th>
+                <th className="px-4 py-3">{t("date")}</th>
+                <th className="px-4 py-3">{t("action")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {tenantPayments.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-3 text-center text-gray-400">No pending tenant invoices</td></tr>
+                <tr><td colSpan={5} className="px-4 py-3 text-center text-gray-400">{t("noPendingInvoices")}</td></tr>
               )}
                 {tenantPayments.map((p) => (
                 <tr key={p.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-mono text-xs">{p.invoiceRef ?? formatShortRef(p.id)}</td>
-                  <td className="px-4 py-3">{p.tenant?.name ?? "Unknown"}</td>
+                  <td className="px-4 py-3">{p.tenant?.name ?? t("unknown")}</td>
                   <td className="px-4 py-3">£{(p.amount / 100).toFixed(2)}</td>
                   <td className="px-4 py-3 text-gray-500">{new Date(p.createdAt).toLocaleString()}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
-                      <button disabled={!!busy[p.id]} onClick={() => simulateTenant(p.id, "paid")} className="rounded bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">Mark Paid</button>
-                      <button disabled={!!busy[p.id]} onClick={() => simulateTenant(p.id, "failed")} className="rounded border px-3 py-1 text-xs disabled:opacity-50">Mark Failed</button>
+                      <button disabled={!!busy[p.id]} onClick={() => simulateTenant(p.id, "paid")} className="rounded bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">{t("markPaid")}</button>
+                      <button disabled={!!busy[p.id]} onClick={() => simulateTenant(p.id, "failed")} className="rounded border px-3 py-1 text-xs disabled:opacity-50">{t("markFailed")}</button>
                     </div>
                   </td>
                 </tr>
@@ -219,20 +221,20 @@ export default function PlatformPaymentsPage() {
       </div>
 
       <div className="rounded-xl bg-white shadow">
-        <h2 className="border-b px-4 py-3 text-sm font-semibold text-gray-700">Booking Payments (Pending)</h2>
+        <h2 className="border-b px-4 py-3 text-sm font-semibold text-gray-700">{t("bookingPaymentsPending")}</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
-                <th className="px-4 py-3">Booking</th>
+                <th className="px-4 py-3">{t("booking")}</th>
                 <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Action</th>
+                <th className="px-4 py-3">{t("date")}</th>
+                <th className="px-4 py-3">{t("action")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {bookingPayments.length === 0 && (
-                <tr><td colSpan={4} className="px-4 py-3 text-center text-gray-400">No pending booking payments</td></tr>
+                <tr><td colSpan={4} className="px-4 py-3 text-center text-gray-400">{t("noPendingBookingPayments")}</td></tr>
               )}
               {bookingPayments.map((bp) => (
                 <tr key={bp.id} className="hover:bg-gray-50">
@@ -241,8 +243,8 @@ export default function PlatformPaymentsPage() {
                   <td className="px-4 py-3 text-gray-500">{bp.booking?.date ? new Date(bp.booking.date).toLocaleString() : new Date(bp.createdAt).toLocaleString()}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
-                      <button disabled={!!busy[bp.bookingId]} onClick={() => simulateBooking(bp.bookingId, "paid")} className="rounded bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">Mark Paid</button>
-                      <button disabled={!!busy[bp.bookingId]} onClick={() => simulateBooking(bp.bookingId, "failed")} className="rounded border px-3 py-1 text-xs disabled:opacity-50">Mark Failed</button>
+                      <button disabled={!!busy[bp.bookingId]} onClick={() => simulateBooking(bp.bookingId, "paid")} className="rounded bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50">{t("markPaid")}</button>
+                      <button disabled={!!busy[bp.bookingId]} onClick={() => simulateBooking(bp.bookingId, "failed")} className="rounded border px-3 py-1 text-xs disabled:opacity-50">{t("markFailed")}</button>
                     </div>
                   </td>
                 </tr>
