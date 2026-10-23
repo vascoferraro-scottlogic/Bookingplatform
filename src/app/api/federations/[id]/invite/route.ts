@@ -61,6 +61,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (existingMembership) return jsonError("Club is already a member", 409);
 
+  // Lapsed PENDING invites no longer block a re-invite
+  await prisma.federationInvite.updateMany({
+    where: { federationId: id, inviteeTenantId: invitee.id, status: "PENDING", expiresAt: { lt: new Date() } },
+    data: { status: "EXPIRED" },
+  });
+
   // Check no pending invite exists
   const existingInvite = await prisma.federationInvite.findFirst({
     where: { federationId: id, inviteeTenantId: invitee.id, status: "PENDING" },

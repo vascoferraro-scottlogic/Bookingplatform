@@ -75,15 +75,24 @@ export async function POST(_req: Request, { params }: { params: Promise<{ token:
     return jsonError(`Federation is at capacity (${invite.federation.maxClubs} clubs)`, 400);
   }
 
-  // Accept: create membership + update invite status
+  // Accept: create membership (or reactivate one the club left earlier — the
+  // (federationId, tenantId) pair is unique) + update invite status
+  const previous = await prisma.federationMembership.findFirst({
+    where: { federationId: invite.federationId, tenantId },
+  });
   await prisma.$transaction([
-    prisma.federationMembership.create({
-      data: {
-        federationId: invite.federationId,
-        tenantId,
-        billingMode: "HOST_CLUB_RATE",
-      },
-    }),
+    previous
+      ? prisma.federationMembership.update({
+          where: { id: previous.id },
+          data: { leftAt: null, joinedAt: new Date(), billingMode: "HOST_CLUB_RATE" },
+        })
+      : prisma.federationMembership.create({
+          data: {
+            federationId: invite.federationId,
+            tenantId,
+            billingMode: "HOST_CLUB_RATE",
+          },
+        }),
     prisma.federationInvite.update({
       where: { id: invite.id },
       data: { status: "ACCEPTED" },
