@@ -35,7 +35,7 @@ export default function BookingsPage() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [availability, setAvailability] = useState<any[]>([]);
   const [tenantConfig, setTenantConfig] = useState<{
-    openingTime: string; closingTime: string; seasonStart: string | null; seasonEnd: string | null;
+    openingTime: string; closingTime: string; timezone?: string; seasonStart: string | null; seasonEnd: string | null;
   } | null>(null);
   const [weather, setWeather] = useState<any>(null);
 
@@ -123,12 +123,12 @@ export default function BookingsPage() {
     tenantConfig?.closingTime ?? DEFAULT_CLOSING_TIME,
   );
 
-  // Booking times are club local time; the availability config carries no
-  // timezone, so use the default club timezone (Europe/London).
+  // Booking times are club local time; the availability config carries the
+  // club timezone (defaults to Europe/London).
   function canMemberCancel(b: Booking): boolean {
     if (["REQUESTED", "APPROVED"].includes(b.status)) return true;
     if (["RESERVED", "CONFIRMED"].includes(b.status)) {
-      return startsMoreThanHoursAway(bookingStart(b), CANCELLATION_WINDOW_HOURS);
+      return startsMoreThanHoursAway(bookingStart(b, tenantConfig?.timezone), CANCELLATION_WINDOW_HOURS);
     }
     return false;
   }

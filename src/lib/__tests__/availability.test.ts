@@ -73,6 +73,14 @@ describe("GET /api/bookings/availability", () => {
     const taken = body.greens[0].rinks[0].bookingSlots.map((s: any) => s.timeSlot).sort();
     expect(taken).toEqual(["11:00", "12:00"]);
   });
+
+  test("[B-30] config exposes the tenant timezone for the 48h cancel cutoff", async () => {
+    signInAs(USER);
+
+    const { body } = await readJson(await memberAvailability(request(`/api/bookings/availability?date=${DATE}`)));
+
+    expect(body.config.timezone).toBe("Europe/London");
+  });
 });
 
 describe("GET /api/public/club/[slug]/availability", () => {

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { DEFAULT_OPENING_TIME, DEFAULT_CLOSING_TIME } from "@/lib/time-slots";
+import { DEFAULT_TIMEZONE } from "@/lib/booking-time";
 import { isGreenOpenOn, seasonWindowForDate } from "@/lib/season";
 
 /** Get availability grid: all rinks with booking status for a given date. */
@@ -61,6 +62,7 @@ export async function GET(req: NextRequest) {
     config: {
       openingTime: tenant?.openingTime ?? DEFAULT_OPENING_TIME,
       closingTime: tenant?.closingTime ?? DEFAULT_CLOSING_TIME,
+      timezone: tenant?.timezone ?? DEFAULT_TIMEZONE,
     },
     greens: annotatedGreens,
   });
