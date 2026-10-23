@@ -50,12 +50,13 @@
     "noBookings": "No bookings."
   },
   "impersonation": {
-    "actingAs": "{name} — acting as {role} of {tenant}",
+    "actingAs": "<b>{name}</b> — acting as <b>{role}</b> of <b>{tenant}</b>",
     "exit": "Exit impersonation",
     "exiting": "Exiting…",
     "exitFailed": "Could not end impersonation.",
     "networkError": "Network error ending impersonation.",
-    "staleSession": "A previous impersonation session has ended. Pick a club to start a new one."
+    "staleSession": "A previous impersonation session has ended. Pick a club to start a new one.",
+    "platformAdmin": "Platform admin"
   },
   "notifications": {
     "title": "Notifications",

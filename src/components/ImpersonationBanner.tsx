@@ -21,7 +21,7 @@ export default function ImpersonationBanner() {
 
   if (!acting) return null;
 
-  const realName = session?.user?.name || session?.user?.email || "Platform admin";
+  const realName = session?.user?.name || session?.user?.email || t("platformAdmin");
 
   async function exit() {
     setExiting(true);
@@ -52,8 +52,12 @@ export default function ImpersonationBanner() {
         <div className="flex items-center gap-2">
           <span aria-hidden>⚠️</span>
           <span>
-            <strong>{realName}</strong> — acting as <strong>{acting.role}</strong> of{" "}
-            <strong>{acting.tenantName}</strong>
+            {t.rich("actingAs", {
+              name: realName,
+              role: acting.role,
+              tenant: acting.tenantName,
+              b: (chunks) => <strong>{chunks}</strong>,
+            })}
           </span>
         </div>
         <div className="flex items-center gap-3">

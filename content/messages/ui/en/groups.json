@@ -32,5 +32,9 @@
   "duplicateName": "A group with that name already exists.",
   "selectMember": "Select a member to add…",
   "grantCount": "{count} permissions",
-  "memberCount": "{count} members"
+  "memberCount": "{count} members",
+  "loading": "Loading…",
+  "notFound": "Group not found.",
+  "allMembersAdded": "All active members are already in this group.",
+  "cardDescription": "Manage who can do what — assign members to groups with specific permissions."
 }

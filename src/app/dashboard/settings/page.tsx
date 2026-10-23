@@ -28,6 +28,7 @@ export default async function SettingsPage() {
   if (!effectiveTenantId) redirect("/dashboard");
 
   const t = await getTranslations("settings");
+  const tg = await getTranslations("groups");
   const fedEnabled = await isFeatureEnabled(effectiveTenantId, "federation");
 
   return (
@@ -85,9 +86,9 @@ export default async function SettingsPage() {
             className="flex items-center justify-between px-4 py-4 hover:bg-gray-50"
           >
             <div>
-              <p className="font-medium text-gray-900">Permission Groups</p>
+              <p className="font-medium text-gray-900">{tg("title")}</p>
               <p className="text-sm text-gray-500">
-                Manage who can do what — assign members to groups with specific permissions.
+                {tg("cardDescription")}
               </p>
             </div>
             <span className="text-emerald-700 text-sm">{t("edit")}</span>

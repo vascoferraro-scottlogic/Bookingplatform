@@ -38,6 +38,7 @@ export default function GroupDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const t = useTranslations("settings.groups");
+  const tg = useTranslations("groups");
 
   const [group, setGroup] = useState<GroupDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -182,8 +183,8 @@ export default function GroupDetailPage() {
     }
   }
 
-  if (loading) return <div className="p-6 text-gray-500">Loading…</div>;
-  if (!group) return <div className="p-6 text-red-600">Group not found.</div>;
+  if (loading) return <div className="p-6 text-gray-500">{tg("loading")}</div>;
+  if (!group) return <div className="p-6 text-red-600">{tg("notFound")}</div>;
 
   const currentMemberIds = new Set(group.members.map((m) => m.membershipId));
   const availableToAdd = allMemberships.filter((m) => !currentMemberIds.has(m.id) && m.status === "ACTIVE");
@@ -315,7 +316,7 @@ export default function GroupDetailPage() {
           <div className="rounded-xl border bg-white p-4">
             <h3 className="font-medium text-gray-800 mb-2">{t("addMember")}</h3>
             {availableToAdd.length === 0 ? (
-              <p className="text-sm text-gray-500">All active members are already in this group.</p>
+              <p className="text-sm text-gray-500">{tg("allMembersAdded")}</p>
             ) : (
               <div className="flex gap-2 items-center">
                 <select

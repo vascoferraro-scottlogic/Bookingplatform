@@ -14,6 +14,7 @@ type Group = {
 
 export default function GroupsPage() {
   const t = useTranslations("settings.groups");
+  const tg = useTranslations("groups");
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -54,7 +55,7 @@ export default function GroupsPage() {
   }
 
   if (loading) {
-    return <div className="p-6 text-gray-500">Loading…</div>;
+    return <div className="p-6 text-gray-500">{tg("loading")}</div>;
   }
 
   return (

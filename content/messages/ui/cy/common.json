@@ -50,12 +50,13 @@
     "noBookings": "[cy] No bookings."
   },
   "impersonation": {
-    "actingAs": "[cy] {name} — acting as {role} of {tenant}",
+    "actingAs": "[cy] <b>{name}</b> — acting as <b>{role}</b> of <b>{tenant}</b>",
     "exit": "[cy] Exit impersonation",
     "exiting": "[cy] Exiting…",
     "exitFailed": "[cy] Could not end impersonation.",
     "networkError": "[cy] Network error ending impersonation.",
-    "staleSession": "[cy] A previous impersonation session has ended. Pick a club to start a new one."
+    "staleSession": "[cy] A previous impersonation session has ended. Pick a club to start a new one.",
+    "platformAdmin": "[cy] Platform admin"
   },
   "notifications": {
     "title": "[cy] Notifications",

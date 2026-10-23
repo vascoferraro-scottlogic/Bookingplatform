@@ -32,5 +32,9 @@
   "duplicateName": "[cy] A group with that name already exists.",
   "selectMember": "[cy] Select a member to add…",
   "grantCount": "[cy] {count} permissions",
-  "memberCount": "[cy] {count} members"
+  "memberCount": "[cy] {count} members",
+  "loading": "[cy] Loading…",
+  "notFound": "[cy] Group not found.",
+  "allMembersAdded": "[cy] All active members are already in this group.",
+  "cardDescription": "[cy] Manage who can do what — assign members to groups with specific permissions."
 }
