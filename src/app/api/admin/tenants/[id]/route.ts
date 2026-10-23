@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, rejectIfImpersonating, jsonError, getEffective } from "@/lib/api-utils";
 import { logAudit } from "@/lib/audit";
+import { CHARITY_FEATURE_KEY, isCharityEligible } from "@/lib/charity/feature-gate";
 
 // Tenant-plane fields. Editing these is a tenant-side action, so it requires
 // the **effective** TENANT_ADMIN of the tenant — i.e. either a real
@@ -221,6 +222,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const tenant = await prisma.tenant.update({ where: { id }, data: allowed });
     logAudit({ session, action, entity: "Tenant", entityId: id, tenantId: id, meta: allowed });
+
+    // Charity eligibility depends on country and legal form (FR-CHA-001): when
+    // an edit makes the club ineligible, the charity module is switched off.
+    if ("country" in allowed || "organisationType" in allowed) {
+      if (!isCharityEligible(tenant.country, tenant.organisationType)) {
+        const { count } = await prisma.featureFlag.updateMany({
+          where: { tenantId: id, key: CHARITY_FEATURE_KEY, enabled: true },
+          data: { enabled: false },
+        });
+        if (count > 0) {
+          logAudit({ session, action: "admin.tenant.charity_disabled", entity: "Tenant", entityId: id, tenantId: id, meta: { reason: "not charity eligible" } });
+        }
+      }
+    }
     return NextResponse.json(tenant);
   } catch (err: unknown) {
     if (typeof err === "object" && err !== null && "code" in err) {

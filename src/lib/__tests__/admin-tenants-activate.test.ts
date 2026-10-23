@@ -86,3 +86,43 @@ describe("PATCH /api/admin/tenants/[id] — bookingFeePence (FR-PAY-005)", () =>
     expect(prismaMock.tenant.update).not.toHaveBeenCalled();
   });
 });
+
+describe("PATCH /api/admin/tenants/[id] — charity eligibility (B-80)", () => {
+  beforeEach(() => {
+    signInAs({ id: "ta-1", role: "TENANT_ADMIN", tenantId: "t-1" });
+    prismaMock.featureFlag.updateMany.mockResolvedValue({ count: 1 } as never);
+  });
+
+  const updatedTo = (country: string, organisationType: string | null) =>
+    prismaMock.tenant.update.mockImplementation((async ({ where, data }: any) => ({ id: where.id, country, organisationType, ...data })) as never);
+
+  test("[B-80] FR-CHA-001 – changing the legal form to a non-charity switches the charity flag off", async () => {
+    updatedTo("GB", "PRIVATE_MEMBERS_CLUB");
+
+    const { status } = await patchTenant("t-1", { organisationType: "PRIVATE_MEMBERS_CLUB" });
+
+    expect(status).toBe(200);
+    expect(prismaMock.featureFlag.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: "t-1", key: "charity", enabled: true },
+      data: { enabled: false },
+    });
+  });
+
+  test("[B-80] FR-CHA-001 – changing the country to an unsupported one switches the charity flag off", async () => {
+    updatedTo("OTHER", "REGISTERED_CHARITY");
+
+    await patchTenant("t-1", { country: "OTHER" });
+
+    expect(prismaMock.featureFlag.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ key: "charity" }), data: { enabled: false } }),
+    );
+  });
+
+  test("[B-80] FR-CHA-001 – an edit that leaves the club eligible leaves the charity flag alone", async () => {
+    updatedTo("NI", "CIO");
+
+    await patchTenant("t-1", { country: "NI" });
+
+    expect(prismaMock.featureFlag.updateMany).not.toHaveBeenCalled();
+  });
+});
