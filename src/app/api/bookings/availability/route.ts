@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
+import { DEFAULT_OPENING_TIME, DEFAULT_CLOSING_TIME } from "@/lib/time-slots";
 import { isGreenOpenOn, seasonWindowForDate } from "@/lib/season";
 
 /** Get availability grid: all rinks with booking status for a given date. */
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
               where: {
                 booking: {
                   date,
-                  status: { in: ["APPROVED", "RESERVED", "CONFIRMED"] },
+                  status: { in: ["RESERVED", "CONFIRMED"] },
                 },
               },
               select: { timeSlot: true, playerName: true, bookingId: true },
@@ -57,8 +58,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     config: {
-      openingTime: tenant?.openingTime ?? "09:00",
-      closingTime: tenant?.closingTime ?? "18:00",
+      openingTime: tenant?.openingTime ?? DEFAULT_OPENING_TIME,
+      closingTime: tenant?.closingTime ?? DEFAULT_CLOSING_TIME,
     },
     greens: annotatedGreens,
   });

@@ -38,7 +38,7 @@ export async function GET(req: NextRequest, { params }: Params) {
             where: {
               booking: {
                 date,
-                status: { in: ["APPROVED", "RESERVED", "CONFIRMED"] },
+                status: { in: ["RESERVED", "CONFIRMED"] },
               },
             },
             select: { timeSlot: true },

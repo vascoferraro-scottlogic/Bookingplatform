@@ -6,6 +6,18 @@ import { logAudit } from "@/lib/audit";
 import { isGreenOpenOn, type GreenSeasonInfo } from "@/lib/season";
 import { hasPermission, assertPermissionOrFail, Permission } from "@/lib/permissions";
 import { isFeatureEnabled } from "@/lib/features";
+import { createNotification, type NotificationType } from "@/lib/notifications";
+import {
+  DEFAULT_CLOSING_TIME,
+  DEFAULT_OPENING_TIME,
+  SLOT_MINUTES,
+  isValidIsoDate,
+  parseTimeSlot,
+  todayInTimezone,
+} from "@/lib/time-slots";
+
+/** Only these bookings hold a slot (D-02). */
+const BLOCKING_STATUSES = ["RESERVED", "CONFIRMED"] as const;
 
 /** List bookings for the caller's tenant context (impersonation-aware). */
 export async function GET(req: NextRequest) {
@@ -16,16 +28,28 @@ export async function GET(req: NextRequest) {
   if (tErr) return tErr;
 
   const canViewAll = await hasPermission(session, tenantId, Permission.bookings_manage);
-  const bookings = await prisma.booking.findMany({
+  const include = {
+    slots: { include: { rink: true } },
+    user: { select: { id: true, name: true, email: true } },
+    bookedByUser: { select: { id: true, name: true, email: true } },
+    payment: true,
+  };
+  const ownClubBookings = await prisma.booking.findMany({
     where: { tenantId, ...(canViewAll ? {} : { userId: session.user.id }) },
-    include: {
-      slots: { include: { rink: true } },
-      user: { select: { id: true, name: true, email: true } },
-      bookedByUser: { select: { id: true, name: true, email: true } },
-      payment: true,
-    },
+    include,
     orderBy: { date: "desc" },
   });
+  // The caller's own bookings made at partner clubs (federation) belong to
+  // this club's members too, so they can see (and cancel) them.
+  const partnerClubBookings = await prisma.booking.findMany({
+    where: { bookedByTenantId: tenantId, userId: session.user.id },
+    include,
+    orderBy: { date: "desc" },
+  });
+  const seen = new Set<string>();
+  const bookings = [...ownClubBookings, ...(partnerClubBookings ?? [])]
+    .filter((b) => (seen.has(b.id) ? false : (seen.add(b.id), true)))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
   if (canViewAll) {
     logAudit({ session, action: "pii.booking_players_viewed", entity: "Booking", piiAccess: true, tenantId, meta: { count: bookings.length } });
@@ -57,6 +81,20 @@ export async function POST(req: NextRequest) {
     return jsonError("date and slots[] required");
   }
 
+  if (!isValidIsoDate(date)) {
+    return jsonError("date must be a valid date in YYYY-MM-DD format");
+  }
+
+  // The same rink at the same time can't be requested twice in one booking.
+  const seenSlots = new Set<string>();
+  for (const s of slots) {
+    const key = `${s?.rinkId}|${s?.timeSlot}`;
+    if (seenSlots.has(key)) {
+      return jsonError(`Duplicate slot: rink ${s.rinkId} at ${s.timeSlot} was requested more than once`, 400);
+    }
+    seenSlots.add(key);
+  }
+
   // ── Cross-club (federation) booking resolution ──────────────
   // If targetTenantId differs from the session's tenant, this is a
   // cross-club booking via federation. We resolve the booking tenant
@@ -72,8 +110,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Target club must exist
-    const targetTenant = await prisma.tenant.findUnique({ where: { id: targetTenantId }, select: { id: true } });
+    const targetTenant = await prisma.tenant.findUnique({ where: { id: targetTenantId }, select: { id: true, active: true, status: true } });
     if (!targetTenant) return jsonError("Target club not found", 404);
+
+    // Target club must be active and have federation enabled itself
+    if (!targetTenant.active || targetTenant.status !== "ACTIVE") {
+      return jsonError("Target club is not active", 403);
+    }
+    if (!(await isFeatureEnabled(targetTenantId, "federation"))) {
+      return jsonError("Target club has not enabled federation", 403);
+    }
 
     // User must have federation_book_at_partners permission at home club
     if (!(await hasPermission(session, tenantId, Permission.federation_book_at_partners))) {
@@ -128,15 +174,38 @@ export async function POST(req: NextRequest) {
   // ── Admin override logic ────────────────────────────────────
   const useOverride = adminOverride === true;
   if (useOverride) {
-    const permErr = await assertPermissionOrFail(session, tenantId, Permission.bookings_admin_override);
+    // The override applies at the club being booked, so check the permission there.
+    const permErr = await assertPermissionOrFail(session, bookingTenantId, Permission.bookings_admin_override);
     if (permErr) return permErr;
     if (!overrideReason || typeof overrideReason !== "string" || overrideReason.trim().length === 0) {
       return jsonError("overrideReason is required when adminOverride is true", 400);
     }
   }
 
+  // ── Opening hours and date (booking club's hours and timezone) ──
+  const bookingTenant = await prisma.tenant.findUnique({
+    where: { id: bookingTenantId },
+    select: { openingTime: true, closingTime: true, timezone: true },
+  });
+  const openingTime = bookingTenant?.openingTime ?? DEFAULT_OPENING_TIME;
+  const closingTime = bookingTenant?.closingTime ?? DEFAULT_CLOSING_TIME;
+  const openMin = parseTimeSlot(openingTime);
+  const closeMin = parseTimeSlot(closingTime);
+  for (const s of slots) {
+    const t = parseTimeSlot(s?.timeSlot);
+    if (t === null) {
+      return jsonError(`Invalid timeSlot "${s?.timeSlot}": use HH:MM`, 400);
+    }
+    if (openMin === null || closeMin === null || t < openMin || t + SLOT_MINUTES > closeMin) {
+      return jsonError(`timeSlot ${s.timeSlot} is outside opening hours (${openingTime}–${closingTime})`, 400);
+    }
+  }
+  if (date < todayInTimezone(bookingTenant?.timezone)) {
+    return jsonError("date is in the past", 400);
+  }
+
   // ── Validate rinks belong to booking tenant ──────────────────
-  const rinkIds: string[] = slots.map((s) => s.rinkId);
+  const rinkIds: string[] = [...new Set(slots.map((s) => s.rinkId))];
   const rinks = await prisma.rink.findMany({
     where: { id: { in: rinkIds }, green: { tenantId: bookingTenantId } },
     include: {
@@ -155,35 +224,39 @@ export async function POST(req: NextRequest) {
     return jsonError("One or more rinks not found for this club", 404);
   }
 
-  // ── Per-green season enforcement ────────────────────────────
-  if (!useOverride) {
-    const checkedGreens = new Set<string>();
-    for (const rink of rinks) {
-      if (checkedGreens.has(rink.greenId)) continue;
-      checkedGreens.add(rink.greenId);
-      const g = rink.green as GreenSeasonInfo & { name: string };
-      if (!isGreenOpenOn(g, date)) {
-        return jsonError(
-          `${g.name} is closed for the season on ${date}`,
-          400,
-        );
-      }
+  // ── Per-green season enforcement (applies to overrides too) ──
+  const checkedGreens = new Set<string>();
+  for (const rink of rinks) {
+    if (checkedGreens.has(rink.greenId)) continue;
+    checkedGreens.add(rink.greenId);
+    const g = rink.green as GreenSeasonInfo & { name: string };
+    if (!isGreenOpenOn(g, date)) {
+      return jsonError(
+        `${g.name} is closed for the season on ${date}`,
+        400,
+      );
     }
   }
 
-  // ── Conflict check (skipped when adminOverride) ─────────────
-  if (!useOverride) {
-    for (const slot of slots) {
-      const conflict = await prisma.bookingSlot.findFirst({
-        where: {
-          rinkId: slot.rinkId,
-          timeSlot: slot.timeSlot,
-          booking: { date, status: { in: ["APPROVED", "RESERVED", "CONFIRMED"] }, tenantId: bookingTenantId },
-        },
-      });
-      if (conflict) {
-        return jsonError(`Rink ${slot.rinkId} slot ${slot.timeSlot} on ${date} is already booked`, 409);
-      }
+  // ── Conflict check ──────────────────────────────────────────
+  // Only RESERVED/CONFIRMED bookings hold a slot (D-02). A normal booking is
+  // refused on a clash; an admin override goes ahead and the displaced
+  // bookings' owners are notified once the new booking exists.
+  const displaced = new Map<string, { userId: string; slot: string }>();
+  for (const slot of slots) {
+    const held = await prisma.bookingSlot.findFirst({
+      where: {
+        rinkId: slot.rinkId,
+        timeSlot: slot.timeSlot,
+        booking: { date, status: { in: [...BLOCKING_STATUSES] }, tenantId: bookingTenantId },
+      },
+      include: { booking: { select: { id: true, userId: true } } },
+    });
+    if (held && !useOverride) {
+      return jsonError(`Rink ${slot.rinkId} slot ${slot.timeSlot} on ${date} is already booked`, 409);
+    }
+    if (held?.booking?.userId && !displaced.has(held.booking.id)) {
+      displaced.set(held.booking.id, { userId: held.booking.userId, slot: slot.timeSlot });
     }
   }
 
@@ -199,6 +272,8 @@ export async function POST(req: NextRequest) {
       where: {
         userId: bookeeUserId,
         date,
+        // Clashes are with the user's bookings at OTHER clubs.
+        tenantId: { not: bookingTenantId },
         status: { in: ["APPROVED", "RESERVED", "CONFIRMED", "REQUESTED"] },
       },
       include: {
@@ -275,23 +350,35 @@ export async function POST(req: NextRequest) {
     meta.federationId = federationId;
   }
 
+  // Tell the owners of any bookings the override displaced.
+  const displacedIds: string[] = [];
+  for (const [displacedId, d] of displaced) {
+    if (d.userId === bookeeUserId) continue;
+    await createNotification({
+      tenantId: bookingTenantId,
+      userId: d.userId,
+      type: "BOOKING_OVERRIDE" as NotificationType,
+      title: "Booking overridden",
+      body: `A club administrator has overridden your booking for ${date} at ${d.slot}. Reason: ${overrideReason!.trim().slice(0, 500)}`,
+    });
+    displacedIds.push(displacedId);
+  }
+  if (displacedIds.length > 0) meta.displacedBookingIds = displacedIds;
+
   logAudit({ session, action: "booking.created", entity: "Booking", entityId: booking.id, tenantId: bookingTenantId, meta });
 
   return NextResponse.json(booking, { status: 201 });
 }
 
 /**
- * Check if an existing slot's time is adjacent to any requested slot.
- * "10:00-12:00" is adjacent to "12:00-14:00" (end of one = start of other).
+ * Is an existing slot ("HH:MM", one hour long) immediately before or after
+ * any requested slot?
  */
 function isAdjacentSlot(existingSlot: string, requestedSlots: string[]): boolean {
-  const [, existingEnd] = existingSlot.split("-");
-  const existingStart = existingSlot.split("-")[0];
-  if (!existingEnd || !existingStart) return false;
-
-  for (const rs of requestedSlots) {
-    const [reqStart, reqEnd] = rs.split("-");
-    if (existingEnd === reqStart || reqEnd === existingStart) return true;
-  }
-  return false;
+  const existing = parseTimeSlot(existingSlot);
+  if (existing === null) return false;
+  return requestedSlots.some((rs) => {
+    const requested = parseTimeSlot(rs);
+    return requested !== null && Math.abs(requested - existing) === SLOT_MINUTES;
+  });
 }
