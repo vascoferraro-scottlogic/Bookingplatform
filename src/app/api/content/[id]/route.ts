@@ -24,8 +24,11 @@ export async function GET(req: NextRequest, { params }: Params) {
   const { tenantId, error: tErr } = resolveTenantId(session, req);
   if (tErr) return tErr;
 
+  // Only admins can see unpublished sections
+  const isAdmin = hasRole(getEffective(session).role, "TENANT_ADMIN");
+
   const section = await prisma.contentSection.findFirst({
-    where: { id, tenantId },
+    where: { id, tenantId, ...(!isAdmin ? { status: "PUBLISHED" } : {}) },
     include: {
       createdBy: { select: { id: true, name: true } },
       updatedBy: { select: { id: true, name: true } },
@@ -97,7 +100,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   return NextResponse.json(section);
 }
 
-/** DELETE — hard-delete drafts, archive anything else. TENANT_ADMIN+ only. */
+/** DELETE — hard-delete drafts, archive where the lifecycle allows it. TENANT_ADMIN+ only. */
 export async function DELETE(req: NextRequest, { params }: Params) {
   const { id } = await params;
   const { session, error } = await getSessionOrFail();
@@ -119,7 +122,11 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     return NextResponse.json({ deleted: true });
   }
 
-  // Non-draft: archive instead of hard delete
+  // Non-draft: archive instead of hard delete, but only along an allowed transition
+  if (!STATUS_TRANSITIONS[existing.status]?.includes("ARCHIVED")) {
+    return jsonError("Cannot archive a section in " + existing.status + " status", 409);
+  }
+
   const section = await prisma.contentSection.update({
     where: { id },
     data: { status: "ARCHIVED", updatedById: session.user.id },
