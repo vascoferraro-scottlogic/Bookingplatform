@@ -46,8 +46,12 @@ export default function StreamingPage() {
   }
 
   async function fetchGreens() {
-    const res = await fetch("/api/bookings/greens");
-    if (res.ok) setGreens(await res.json());
+    // Any role that can create a stream may list the club's greens and rinks here (admin/greens is TENANT_ADMIN only).
+    const res = await fetch(`/api/bookings/availability?date=${new Date().toISOString().slice(0, 10)}`);
+    if (res.ok) {
+      const d = await res.json();
+      setGreens(Array.isArray(d?.greens) ? d.greens : []);
+    }
   }
 
   async function createStream(e: React.FormEvent) {
