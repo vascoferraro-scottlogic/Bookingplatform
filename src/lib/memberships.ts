@@ -25,6 +25,12 @@ export async function getActiveMembershipsForUser(userId: string): Promise<Membe
   return all.filter((m) => m.status === "ACTIVE");
 }
 
+/** Memberships the user can switch to: ACTIVE in a tenant that isn't suspended or churned (D-08). */
+export async function getUsableMembershipsForUser(userId: string): Promise<MembershipWithTenant[]> {
+  const all = await getMembershipsForUser(userId);
+  return all.filter(isUsableMembership);
+}
+
 /**
  * Pick the user's "primary" membership: the lowest-createdAt active membership.
  * Falls back to the lowest-createdAt of any status if none are active.
@@ -42,10 +48,13 @@ export async function findMembership(userId: string, tenantId: string) {
   return prisma.membership.findUnique({ where: { userId_tenantId: { userId, tenantId } } });
 }
 
-/** True if the user has an ACTIVE membership in the given tenant. */
+/** True if the user has an ACTIVE membership in the given tenant, and that tenant isn't suspended or churned (D-08). */
 export async function userHasActiveMembershipIn(userId: string, tenantId: string): Promise<boolean> {
-  const m = await findMembership(userId, tenantId);
-  return !!m && m.status === "ACTIVE";
+  const m = await prisma.membership.findUnique({
+    where: { userId_tenantId: { userId, tenantId } },
+    include: { tenant: { select: { status: true } } },
+  });
+  return !!m && m.status === "ACTIVE" && !isTenantBlocked(m.tenant?.status);
 }
 
 export type ResolvedActiveContext = {
