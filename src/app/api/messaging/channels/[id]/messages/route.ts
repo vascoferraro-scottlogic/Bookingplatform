@@ -52,12 +52,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   const { id } = await ctx.params;
   const channel = await getChannelById(id);
-  if (!channel) {
+  if (!channel || channel.tenantId !== tenantId) {
     return jsonError("Channel not found", 404);
   }
 
   const membership = await isMember(id, session.user.id);
-  if (!membership && !hasRole(session.user.role, "TENANT_ADMIN")) {
+  if (!membership && !hasRole(getEffective(session).role, "TENANT_ADMIN")) {
     return jsonError("Not a member of this channel", 403);
   }
 

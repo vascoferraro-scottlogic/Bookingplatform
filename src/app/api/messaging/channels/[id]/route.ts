@@ -5,7 +5,7 @@ import { resolveTenantId } from "@/lib/tenant";
 import { isFeatureEnabled } from "@/lib/features";
 import { hasRole } from "@/lib/roles";
 import { logAudit } from "@/lib/audit";
-import { getChannelById, isMember } from "@/lib/messaging";
+import { getChannelById, isMember, isReservedChannelName } from "@/lib/messaging";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -53,13 +53,15 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     return jsonError("Channel not found", 404);
   }
 
-  const isAdmin = hasRole(getEffective(session).role, "TENANT_ADMIN");
-  const membership = await isMember(id, session.user.id);
-  if (!isAdmin && membership?.role !== "OWNER") {
-    return jsonError("Only channel owner or admin can update channels", 403);
+  // Only tenant admins rename channels (D-10)
+  if (!hasRole(getEffective(session).role, "TENANT_ADMIN")) {
+    return jsonError("Only admins can update channels", 403);
   }
 
   const { name, description } = await req.json();
+  if (name !== undefined && (typeof name !== "string" || isReservedChannelName(name))) {
+    return jsonError('Channel names starting with "dm:" are reserved');
+  }
   const updated = await prisma.channel.update({
     where: { id },
     data: { ...(name !== undefined ? { name } : {}), ...(description !== undefined ? { description } : {}) },

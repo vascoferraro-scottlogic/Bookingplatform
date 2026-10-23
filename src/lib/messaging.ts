@@ -1,6 +1,25 @@
 import { prisma } from "@/lib/prisma";
 import type { ChannelType, ChannelMemberRole } from "@prisma/client";
 
+// ─── Tenant checks ───────────────────────────────────────────
+
+/** Prefix reserved for direct-message channel names (`dm:<userA>:<userB>`). */
+export const DM_PREFIX = "dm:";
+
+export function isReservedChannelName(name: string) {
+  return name.trim().toLowerCase().startsWith(DM_PREFIX);
+}
+
+/** True when every user id has an active membership in the tenant. */
+export async function usersBelongToTenant(tenantId: string, userIds: string[]) {
+  const unique = [...new Set(userIds)];
+  if (unique.length === 0) return true;
+  const count = await prisma.membership.count({
+    where: { tenantId, userId: { in: unique }, status: "ACTIVE" },
+  });
+  return count === unique.length;
+}
+
 // ─── Channel CRUD ────────────────────────────────────────────
 
 export async function createChannel(params: {

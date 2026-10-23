@@ -260,6 +260,7 @@ export default function MessagingPage() {
           onSelect={setActiveChannelId}
           onCreateClick={() => setShowCreate(true)}
           currentUserId={userId ?? ""}
+          canCreate={isAdmin}
         />
       </div>
 

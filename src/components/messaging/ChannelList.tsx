@@ -18,12 +18,15 @@ export default function ChannelList({
   onSelect,
   onCreateClick,
   currentUserId,
+  canCreate = false,
 }: {
   channels: Channel[];
   activeChannelId: string | null;
   onSelect: (id: string) => void;
   onCreateClick: () => void;
   currentUserId: string;
+  /** Only tenant admins may create channels (D-10). */
+  canCreate?: boolean;
 }) {
   const t = useTranslations("messaging");
   const grouped = {
@@ -48,9 +51,11 @@ export default function ChannelList({
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between p-3 border-b">
         <h3 className="font-bold text-lg">{t("channelList.title")}</h3>
-        <button onClick={onCreateClick} className="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700" title="New Channel">
-          {t("channelList.newChannel")}
-        </button>
+        {canCreate && (
+          <button onClick={onCreateClick} className="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700" title="New Channel">
+            {t("channelList.newChannel")}
+          </button>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto">
         {(Object.keys(grouped) as (keyof typeof grouped)[]).map((type) =>

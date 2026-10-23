@@ -4,7 +4,7 @@ import { resolveTenantId } from "@/lib/tenant";
 import { isFeatureEnabled } from "@/lib/features";
 import { hasRole } from "@/lib/roles";
 import { logAudit } from "@/lib/audit";
-import { getChannelById, isMember, addMember, removeMember, muteUser, unmuteUser } from "@/lib/messaging";
+import { getChannelById, isMember, addMember, usersBelongToTenant, removeMember, muteUser, unmuteUser } from "@/lib/messaging";
 import { sendToUsers } from "@/lib/sse-connections";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -61,6 +61,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   const { userId } = await req.json();
   if (!userId) return jsonError("userId is required");
+
+  if (!(await usersBelongToTenant(tenantId, [userId]))) {
+    return jsonError("User does not belong to this club");
+  }
 
   const existing = await isMember(id, userId);
   if (existing) return jsonError("User is already a member", 409);
