@@ -152,6 +152,22 @@ export default function BookingsPage() {
     loadData(selectedTenant || undefined);
   }
 
+  async function joinWaitlist(bookingId: string) {
+    const res = await fetch(`/api/bookings/${bookingId}/waitlist`, { method: "POST" });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 409) {
+      setSuccessMsg("");
+      alert(t("waitlist.alreadyOn"));
+      return;
+    }
+    if (!res.ok) {
+      alert(body.error ?? t("waitlist.failed"));
+      return;
+    }
+    setSuccessMsg(t("waitlist.joined"));
+    trackAction("booking.waitlist_joined", "Booking", bookingId);
+  }
+
   async function updateStatus(id: string, status: string) {
     const res = await fetch(`/api/bookings/${id}`, {
       method: "PATCH",
@@ -261,6 +277,9 @@ export default function BookingsPage() {
               id: rink.id,
               name: rink.name,
               bookedSlots: (rink.bookingSlots ?? []).map((s: any) => s.timeSlot),
+              bookedSlotBookingIds: Object.fromEntries(
+                (rink.bookingSlots ?? []).filter((s: any) => s.bookingId).map((s: any) => [s.timeSlot, s.bookingId]),
+              ),
             })),
           }))}
           config={{
@@ -270,6 +289,7 @@ export default function BookingsPage() {
           date={date}
           onDateChange={setDate}
           onSlotClick={(rink, slot) => openBookingModal(rink, slot)}
+          onWaitlistClick={joinWaitlist}
         />
       </section>
 

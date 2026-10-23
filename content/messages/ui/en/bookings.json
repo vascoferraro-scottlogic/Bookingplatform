@@ -43,9 +43,15 @@
     "nextSeason": "Next season: {start} – {end}",
     "allWeather": "All weather",
     "season": "Season: {start} – {end}",
-    "noGreens": "No greens configured for this club."
+    "noGreens": "No greens configured for this club.",
+    "joinWaitlist": "Join waiting list"
   },
   "weather": {
     "hourlyForecast": "Hourly forecast"
+  },
+  "waitlist": {
+    "joined": "You have joined the waiting list.",
+    "alreadyOn": "You are already on the waiting list for this booking.",
+    "failed": "Could not join the waiting list."
   }
 }

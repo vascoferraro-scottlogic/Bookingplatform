@@ -43,9 +43,15 @@
     "nextSeason": "[cy] Next season: {start} – {end}",
     "allWeather": "[cy] All weather",
     "season": "[cy] Season: {start} – {end}",
-    "noGreens": "[cy] No greens configured for this club."
+    "noGreens": "[cy] No greens configured for this club.",
+    "joinWaitlist": "[cy] Join waiting list"
   },
   "weather": {
     "hourlyForecast": "[cy] Hourly forecast"
+  },
+  "waitlist": {
+    "joined": "[cy] You have joined the waiting list.",
+    "alreadyOn": "[cy] You are already on the waiting list for this booking.",
+    "failed": "[cy] Could not join the waiting list."
   }
 }

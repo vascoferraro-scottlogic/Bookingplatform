@@ -7,6 +7,8 @@ type RinkData = {
   id: string;
   name: string;
   bookedSlots: string[];
+  /** timeSlot -> id of the booking holding it (needed to join the waiting list) */
+  bookedSlotBookingIds?: Record<string, string>;
 };
 
 type SeasonWindow = { start: string; end: string } | null;
@@ -33,12 +35,14 @@ export default function AvailabilityGrid({
   date,
   onDateChange,
   onSlotClick,
+  onWaitlistClick,
 }: {
   greens: GreenData[];
   config: Config;
   date: string;
   onDateChange: (date: string) => void;
   onSlotClick?: (rink: RinkData, timeSlot: string) => void;
+  onWaitlistClick?: (bookingId: string) => void;
 }) {
   const t = useTranslations("bookings");
   const timeSlots = generateTimeSlots(config.openingTime, config.closingTime);
@@ -99,6 +103,15 @@ export default function AvailabilityGrid({
                             return isBooked ? (
                               <td key={rink.id} className="border px-3 py-2 bg-red-100 text-red-700 text-center text-xs">
                                 {t("grid.booked")}
+                                {onWaitlistClick && rink.bookedSlotBookingIds?.[slot] && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onWaitlistClick(rink.bookedSlotBookingIds![slot])}
+                                    className="block mx-auto mt-1 underline text-red-800 hover:text-red-900"
+                                  >
+                                    {t("grid.joinWaitlist")}
+                                  </button>
+                                )}
                               </td>
                             ) : (
                               <td
