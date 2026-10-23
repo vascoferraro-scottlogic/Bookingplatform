@@ -10,10 +10,13 @@ import {
 } from "@/lib/api-utils";
 import { logAudit } from "@/lib/audit";
 import { sendEmail } from "@/lib/outbound";
+import { verticalFlagRows } from "@/lib/onboarding/vertical-preset";
 
 type Params = { params: Promise<{ id: string }> };
 
 const INVITATION_DAYS = 14;
+
+class ApplicationNotOpenError extends Error {}
 
 /**
  * Generate a placeholder slug like `t-3f9c2b1a`. The admin picks the real,
@@ -66,94 +69,113 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const app = await prisma.tenantApplication.findUnique({ where: { id } });
   if (!app) return jsonError("Application not found", 404);
+  // Only an open application (PENDING / IN_REVIEW) can be approved.
   if (app.status === "APPROVED") return jsonError("Already approved", 409);
+  if (app.status === "REJECTED" || app.status === "MORE_INFO_REQUESTED") {
+    return jsonError(`Cannot approve an application that is ${app.status}`, 409);
+  }
 
   // Placeholder slug — the admin picks the real one during onboarding.
   const slug = await uniquePlaceholderSlug();
 
-  // Tenant created in ONBOARDING; `active` mirrors `status == ACTIVE` so
-  // existing reading code treats this club as inactive until go-live.
-  const tenant = await prisma.tenant.create({
-    data: {
-      name: app.clubName,
-      slug,
-      status: "ONBOARDING",
-      active: false,
-    },
-    select: { id: true, name: true, slug: true },
-  });
-
-  // The maintenance agent is mandatory for every club (provides the
-  // training data the platform's AI relies on). Provisioned on at approval
-  // and locked from tenant-admin toggling — see the flags PUT route.
-  await prisma.featureFlag.create({
-    data: { tenantId: tenant.id, key: "agent", enabled: true },
-  });
-  // Bookings capability — on by default; turned off for admin-only orgs
-  // (CHARITY_ADMIN vertical) when the tenant sets their vertical in the wizard.
-  await prisma.featureFlag.create({
-    data: { tenantId: tenant.id, key: "bookings", enabled: true },
-  });
-
   // Placeholder password hash that cannot match any real password — user
   // sets a real one via the invitation accept flow.
   const placeholderHash = await bcrypt.hash(randomBytes(32).toString("hex"), 4);
-
-  // If a User with this email already exists (multi-club case), reuse it
-  // and just attach a new Membership; otherwise create the User too.
-  let user = await prisma.user.findUnique({
-    where: { email: app.contactEmail },
-    select: { id: true, email: true, name: true },
-  });
-  if (!user) {
-    user = await prisma.user.create({
-      data: {
-        email: app.contactEmail,
-        name: app.contactName,
-        passwordHash: placeholderHash,
-        role: "TENANT_ADMIN", // back-compat mirror; primary membership
-        tenantId: tenant.id,
-      },
-      select: { id: true, email: true, name: true },
-    });
-  }
-
-  // Membership for this tenant (PENDING until invitation accepted).
-  await prisma.membership.create({
-    data: {
-      userId: user.id,
-      tenantId: tenant.id,
-      role: "TENANT_ADMIN",
-      kind: "STAFF",
-      status: "PENDING",
-    },
-  });
-
-  // Invitation row + token.
   const expiresAt = new Date(Date.now() + INVITATION_DAYS * 24 * 60 * 60 * 1000);
-  const invitation = await prisma.userInvitation.create({
-    data: {
-      email: user.email,
-      tenantId: tenant.id,
-      role: "TENANT_ADMIN",
-      kind: "STAFF",
-      invitedById: session.user.id,
-      expiresAt,
-    },
-    select: { id: true, token: true, expiresAt: true },
-  });
 
-  // Mark application approved + link to tenant.
-  await prisma.tenantApplication.update({
-    where: { id: app.id },
-    data: {
-      status: "APPROVED",
-      decisionNotes: body.decisionNotes ?? null,
-      reviewedAt: new Date(),
-      reviewedById: session.user.id,
-      tenantId: tenant.id,
-    },
-  });
+  // Provision everything in one transaction so a failure or a concurrent
+  // approval can't leave half a tenant behind (or two tenants).
+  let provisioned;
+  try {
+    provisioned = await prisma.$transaction(async (tx) => {
+      // Claim the application: conditional on it still being open.
+      const claimed = await tx.tenantApplication.updateMany({
+        where: { id: app.id, status: { in: ["PENDING", "IN_REVIEW"] } },
+        data: {
+          status: "APPROVED",
+          decisionNotes: body.decisionNotes ?? null,
+          reviewedAt: new Date(),
+          reviewedById: session.user.id,
+        },
+      });
+      if (claimed.count === 0) throw new ApplicationNotOpenError();
+
+      // Tenant created in ONBOARDING; `active` mirrors `status == ACTIVE` so
+      // existing reading code treats this club as inactive until go-live.
+      const tenant = await tx.tenant.create({
+        data: {
+          name: app.clubName,
+          slug,
+          status: "ONBOARDING",
+          active: false,
+          vertical: app.vertical,
+        },
+        select: { id: true, name: true, slug: true },
+      });
+
+      // Vertical preset (FR-FLAG-004): bowls → bookings + agent (the agent is
+      // locked from tenant-admin toggling — see the flags PUT route);
+      // charity admin → funding + charity, no bookings.
+      for (const row of verticalFlagRows(app.vertical)) {
+        await tx.featureFlag.create({ data: { tenantId: tenant.id, ...row } });
+      }
+
+      // If a User with this email already exists (multi-club case), reuse it
+      // and just attach a new Membership; otherwise create the User too.
+      let user = await tx.user.findUnique({
+        where: { email: app.contactEmail },
+        select: { id: true, email: true, name: true },
+      });
+      if (!user) {
+        user = await tx.user.create({
+          data: {
+            email: app.contactEmail,
+            name: app.contactName,
+            passwordHash: placeholderHash,
+            role: "TENANT_ADMIN", // back-compat mirror; primary membership
+            tenantId: tenant.id,
+          },
+          select: { id: true, email: true, name: true },
+        });
+      }
+
+      // Membership for this tenant (PENDING until invitation accepted).
+      await tx.membership.create({
+        data: {
+          userId: user.id,
+          tenantId: tenant.id,
+          role: "TENANT_ADMIN",
+          kind: "STAFF",
+          status: "PENDING",
+        },
+      });
+
+      // Invitation row + token.
+      const invitation = await tx.userInvitation.create({
+        data: {
+          email: user.email,
+          tenantId: tenant.id,
+          role: "TENANT_ADMIN",
+          kind: "STAFF",
+          invitedById: session.user.id,
+          expiresAt,
+        },
+        select: { id: true, token: true, expiresAt: true },
+      });
+
+      // Link the application to the new tenant.
+      await tx.tenantApplication.update({
+        where: { id: app.id },
+        data: { tenantId: tenant.id },
+      });
+
+      return { tenant, user, invitation };
+    });
+  } catch (err) {
+    if (err instanceof ApplicationNotOpenError) return jsonError("Already approved", 409);
+    throw err;
+  }
+  const { tenant, user, invitation } = provisioned;
 
   // ── Outbound stubs ──
   const baseUrl = process.env.NEXTAUTH_URL ?? "";

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { jsonError } from "@/lib/api-utils";
 import { sendEmail } from "@/lib/outbound";
+import type { Vertical } from "@prisma/client";
 
 // In-memory rate limit: max 5 submissions per IP per 10 minutes.
 // Public endpoint, so cheap throttling is enough for v1.
@@ -20,6 +21,8 @@ function isRateLimited(ip: string): boolean {
   return entry.count > RATE_MAX;
 }
 
+const VERTICALS = new Set<string>(["BOWLS", "GOLF", "CRICKET", "MULTI_SPORT", "CHARITY_ADMIN", "OTHER"]);
+
 function isEmail(s: unknown): s is string {
   return typeof s === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
@@ -27,7 +30,7 @@ function isEmail(s: unknown): s is string {
 /**
  * POST /api/leads — public lead capture for clubs requesting to join.
  *
- * Body: `{ clubName, contactName, contactEmail, contactPhone?, country, region?, notes? }`
+ * Body: `{ clubName, contactName, contactEmail, contactPhone?, country, region?, vertical?, notes? }`
  *
  * Side effects:
  *  - Creates a `TenantApplication` row in PENDING status.
@@ -63,6 +66,10 @@ export async function POST(req: NextRequest) {
     typeof body.contactPhone === "string" ? body.contactPhone.trim() : null;
   const region =
     typeof body.region === "string" && body.region.trim() ? body.region.trim() : null;
+  const vertical =
+    typeof body.vertical === "string" && VERTICALS.has(body.vertical)
+      ? (body.vertical as Vertical)
+      : undefined;
   const notes =
     typeof body.notes === "string" && body.notes.trim() ? body.notes.trim() : null;
 
@@ -80,6 +87,7 @@ export async function POST(req: NextRequest) {
       country,
       region,
       notes,
+      ...(vertical ? { vertical } : {}),
     },
   });
 

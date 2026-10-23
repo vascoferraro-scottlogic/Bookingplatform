@@ -3,6 +3,12 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertRoleOrFail, rejectIfImpersonating, jsonError } from "@/lib/api-utils";
 import { logAudit } from "@/lib/audit";
+import { verticalFlagRows } from "@/lib/onboarding/vertical-preset";
+import type { Vertical } from "@prisma/client";
+
+const ALLOWED_VERTICALS = new Set<string>([
+  "BOWLS", "GOLF", "CRICKET", "MULTI_SPORT", "CHARITY_ADMIN", "OTHER",
+]);
 
 /** List all tenants (platform admin). */
 export async function GET() {
@@ -41,6 +47,7 @@ export async function POST(req: NextRequest) {
     return jsonError("Invalid JSON body");
   }
   const { name, slug, brandColor, logoUrl, locale, adminEmail, adminPassword, greens, latitude, longitude } = body;
+  const vertical: Vertical = ALLOWED_VERTICALS.has(body.vertical) ? body.vertical : "BOWLS";
 
   if (!name || !slug || !adminEmail || !adminPassword) {
     return jsonError("name, slug, adminEmail, adminPassword are required");
@@ -59,6 +66,9 @@ export async function POST(req: NextRequest) {
         brandColor: brandColor ?? "#16a34a",
         logoUrl,
         locale: locale ?? "en",
+        vertical,
+        // Vertical preset (FR-FLAG-004): bowls → bookings + agent; charity admin → funding + charity.
+        featureFlags: { create: verticalFlagRows(vertical) },
         latitude: latitude ?? null,
         longitude: longitude ?? null,
         users: {
