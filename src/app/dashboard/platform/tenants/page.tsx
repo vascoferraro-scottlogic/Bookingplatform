@@ -95,8 +95,6 @@ export default function PlatformAdminPage() {
           <select value={form.locale} onChange={(e) => setForm({ ...form, locale: e.target.value })} className="rounded border p-2">
             <option value="en">English</option>
             <option value="cy">Cymraeg</option>
-            <option value="fr">Français</option>
-            <option value="gd">Gàidhlig</option>
           </select>
           <input type="text" placeholder={t("platform.tenants.latitudePlaceholder")} value={form.latitude} onChange={(e) => setForm({ ...form, latitude: e.target.value })} className="rounded border p-2" />
           <input type="text" placeholder={t("platform.tenants.longitudePlaceholder")} value={form.longitude} onChange={(e) => setForm({ ...form, longitude: e.target.value })} className="rounded border p-2" />

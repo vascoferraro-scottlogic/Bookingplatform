@@ -35,5 +35,42 @@
     "period": "[cy] Period",
     "date": "[cy] Date",
     "noPayments": "[cy] No payments yet"
+  },
+  "title": "[cy] Billing",
+  "loading": "[cy] Loading billing…",
+  "noProfile": "[cy] No billing profile found. Contact platform admin.",
+  "plan": {
+    "comparePlans": "[cy] Compare Plans",
+    "maxMembers": "[cy] Max Members",
+    "maxGreens": "[cy] Max Greens",
+    "streaming": "[cy] Streaming",
+    "payment": "[cy] Payment",
+    "perMonth": "[cy] /month",
+    "nextBilling": "[cy] Next billing:",
+    "trialEnds": "[cy] Trial ends:"
+  },
+  "contact": {
+    "title": "[cy] Billing Contact",
+    "contactName": "[cy] Contact Name",
+    "contactEmail": "[cy] Contact Email",
+    "vatNumber": "[cy] VAT Number",
+    "save": "[cy] Save",
+    "saved": "[cy] Saved",
+    "saveFailed": "[cy] Save failed"
+  },
+  "invoices": {
+    "title": "[cy] Invoices",
+    "ref": "[cy] Ref",
+    "amount": "[cy] Amount",
+    "status": "[cy] Status",
+    "period": "[cy] Period",
+    "date": "[cy] Date",
+    "noInvoices": "[cy] No invoices yet",
+    "csv": "[cy] CSV"
+  },
+  "charts": {
+    "revenueTrend": "[cy] Revenue Trend (12 months)",
+    "monthlyChurn": "[cy] Monthly Churn",
+    "mrrByPlan": "[cy] MRR by Plan"
   }
 }
