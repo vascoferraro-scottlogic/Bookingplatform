@@ -165,5 +165,15 @@
     "removeMember": "Remove",
     "deleteConfirm": "Delete this group? This cannot be undone.",
     "delete": "Delete group"
+  },
+  "bookingFee": {
+    "label": "Booking fee (£)",
+    "description": "The fee charged per booking, in pounds.",
+    "breadcrumb": "Settings",
+    "title": "Booking fee",
+    "intro": "The fee members pay for each booking once it is confirmed. Enter 0 for no fee.",
+    "invalid": "Enter a valid amount of 0 or more.",
+    "saved": "Booking fee saved.",
+    "saveFailed": "Failed to save."
   }
 }

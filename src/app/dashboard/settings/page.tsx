@@ -53,6 +53,20 @@ export default async function SettingsPage() {
         </li>
         <li>
           <Link
+            href="/dashboard/settings/booking-fee"
+            className="flex items-center justify-between px-4 py-4 hover:bg-gray-50"
+          >
+            <div>
+              <p className="font-medium text-gray-900">{t("bookingFee.label")}</p>
+              <p className="text-sm text-gray-500">
+                {t("bookingFee.description")}
+              </p>
+            </div>
+            <span className="text-emerald-700 text-sm">{t("edit")}</span>
+          </Link>
+        </li>
+        <li>
+          <Link
             href="/dashboard/settings/location"
             className="flex items-center justify-between px-4 py-4 hover:bg-gray-50"
           >

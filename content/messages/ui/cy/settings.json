@@ -165,5 +165,15 @@
     "removeMember": "[cy] Remove",
     "deleteConfirm": "[cy] Delete this group? This cannot be undone.",
     "delete": "[cy] Delete group"
+  },
+  "bookingFee": {
+    "label": "[cy] Booking fee (£)",
+    "description": "[cy] The fee charged per booking, in pounds.",
+    "breadcrumb": "[cy] Settings",
+    "title": "[cy] Booking fee",
+    "intro": "[cy] The fee members pay for each booking once it is confirmed. Enter 0 for no fee.",
+    "invalid": "[cy] Enter a valid amount of 0 or more.",
+    "saved": "[cy] Booking fee saved.",
+    "saveFailed": "[cy] Failed to save."
   }
 }

@@ -66,3 +66,23 @@ describe("PATCH /api/admin/tenants/[id] — activate guard", () => {
     );
   });
 });
+
+describe("PATCH /api/admin/tenants/[id] — bookingFeePence (FR-PAY-005)", () => {
+  beforeEach(() => {
+    signInAs({ id: "ta-1", role: "TENANT_ADMIN", tenantId: "t-1" });
+  });
+
+  test("a tenant admin can set a non-negative integer fee", async () => {
+    const { status } = await patchTenant("t-1", { bookingFeePence: 750 });
+
+    expect(status).toBe(200);
+    expect(prismaMock.tenant.update).toHaveBeenCalledWith({ where: { id: "t-1" }, data: { bookingFeePence: 750 } });
+  });
+
+  test.each([-1, 1.5, "10"])("rejects invalid fee %p with 400", async (fee) => {
+    const { status } = await patchTenant("t-1", { bookingFeePence: fee });
+
+    expect(status).toBe(400);
+    expect(prismaMock.tenant.update).not.toHaveBeenCalled();
+  });
+});

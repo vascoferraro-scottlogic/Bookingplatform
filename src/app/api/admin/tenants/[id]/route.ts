@@ -22,6 +22,7 @@ const TENANT_PLANE_FIELDS = new Set([
   "seasonEnd",
   "openingTime",
   "closingTime",
+  "bookingFeePence",
   "latitude",
   "longitude",
   "locality",
@@ -204,6 +205,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const d = allowed.financialYearEndDay;
       if (typeof d !== "number" || !Number.isInteger(d) || d < 1 || d > 31) {
         return jsonError("financialYearEndDay must be 1..31 or null");
+      }
+    }
+
+    if ("bookingFeePence" in allowed) {
+      const fee = allowed.bookingFeePence;
+      if (typeof fee !== "number" || !Number.isInteger(fee) || fee < 0) {
+        return jsonError("bookingFeePence must be a non-negative integer (pence)");
       }
     }
 
