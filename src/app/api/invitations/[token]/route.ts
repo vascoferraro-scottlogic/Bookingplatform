@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { jsonError } from "@/lib/api-utils";
 import { logAudit } from "@/lib/audit";
 import { sendEmail } from "@/lib/outbound";
+import { passwordRuleError } from "@/lib/auth-rules";
 
 type Params = { params: Promise<{ token: string }> };
 
@@ -59,7 +60,8 @@ export async function POST(req: NextRequest, { params }: Params) {
     return jsonError("Invalid JSON body");
   }
   const password = typeof body.password === "string" ? body.password : "";
-  if (password.length < 8) return jsonError("Password must be at least 8 characters");
+  const ruleError = passwordRuleError(password);
+  if (ruleError) return jsonError(ruleError);
 
   const invite = await prisma.userInvitation.findUnique({
     where: { token },

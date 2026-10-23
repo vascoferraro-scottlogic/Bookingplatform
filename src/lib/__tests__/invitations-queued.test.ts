@@ -119,3 +119,15 @@ describe("invitations: QUEUED for onboarding tenants", () => {
     expect(prismaMock.userInvitation.update).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/invitations/[token] - password rule", () => {
+  test("[B-13] FR-AUTH-001 – a too-short password is rejected with the shared rule message (400)", async () => {
+    const { status, body } = await readJson(
+      await acceptPOST(jsonRequest("POST", "/api/invitations/tok", { password: "short" }), routeParams({ token: "tok" })),
+    );
+
+    expect(status).toBe(400);
+    expect(body.error).toBe("Password must be at least 8 characters");
+    expect(prismaMock.userInvitation.findUnique).not.toHaveBeenCalled();
+  });
+});

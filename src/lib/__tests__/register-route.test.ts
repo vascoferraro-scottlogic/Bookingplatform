@@ -158,6 +158,17 @@ describe("[B-13] POST /api/auth/register — email normalisation, validation, me
     expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
+  test.each(["SUSPENDED", "CHURNED"])("[B-17] registering into a %s club is refused (403, no user created)", async (clubStatus) => {
+    prismaMock.tenant.findFirst.mockResolvedValue({ id: "tenant-1", slug: "lakeview", status: clubStatus, active: true } as never);
+
+    const { status } = await readJson(
+      await register({ email: "new@test.com", password: "Pass1234", tenantSlug: "lakeview" }),
+    );
+
+    expect(status).toBe(403);
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+  });
+
   test("[B-13] FR-AUTH-001 – registering with a tenantSlug creates an ACTIVE USER Membership in that tenant", async () => {
     prismaMock.tenant.findFirst.mockResolvedValue({ id: "tenant-1", slug: "lakeview", status: "ACTIVE", active: true } as never);
     prismaMock.tenant.findUnique.mockResolvedValue({ id: "tenant-1", slug: "lakeview", status: "ACTIVE", active: true } as never);

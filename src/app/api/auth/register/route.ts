@@ -31,6 +31,9 @@ export async function POST(req: NextRequest) {
     if (!tenant) {
       return NextResponse.json({ error: "Club not found" }, { status: 404 });
     }
+    if (tenant.status === "SUSPENDED" || tenant.status === "CHURNED") {
+      return NextResponse.json({ error: "This club is not accepting new members" }, { status: 403 });
+    }
     tenantId = tenant.id;
   }
 
