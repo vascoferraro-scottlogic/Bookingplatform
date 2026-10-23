@@ -14,6 +14,15 @@ async function readPostgresFlag(tenantId: string, key: string): Promise<boolean>
 }
 
 /**
+ * The single Unleash evaluation context for a tenant. Both the API path
+ * (isFeatureEnabled) and the UI path (flagIsOn / evaluatePlatformFlags) use it,
+ * so a flag gives the same answer in the nav and behind the endpoint (NFR-09).
+ */
+function tenantContext(tenantId: string) {
+  return { userId: `tenant:${tenantId}`, properties: { tenantId } };
+}
+
+/**
  * Check if a feature flag is enabled for a tenant.
  *
  * Router (#feature-management): PLATFORM flags resolve from Unleash when it is
@@ -21,18 +30,15 @@ async function readPostgresFlag(tenantId: string, key: string): Promise<boolean>
  * Postgres. While Unleash is unconfigured (pre-cutover / dev / tests) every key
  * reads Postgres, so behaviour is unchanged.
  *
- * This signature has only `tenantId` — it evaluates with per-tenant stickiness
- * (a synthetic `tenant:<id>` userId) so percentage rollouts bucket deterministically
- * per tenant. For per-user targeting use {@link flagIsOn}.
+ * It evaluates with per-tenant stickiness (a synthetic `tenant:<id>` userId) so
+ * percentage rollouts bucket deterministically per tenant. {@link flagIsOn} uses
+ * the same context for the session's effective tenant.
  */
 export async function isFeatureEnabled(tenantId: string, key: string): Promise<boolean> {
   if (isPlatformFlag(key)) {
     const unleash = getUnleash();
     if (unleash) {
-      return unleash.isEnabled(key, {
-        userId: `tenant:${tenantId}`,
-        properties: { tenantId },
-      });
+      return unleash.isEnabled(key, tenantContext(tenantId));
     }
   }
   return readPostgresFlag(tenantId, key);
@@ -48,19 +54,17 @@ export async function flagIsOn(
   session: AppSession | null,
   req?: Request,
 ): Promise<boolean> {
+  const tenantId = session
+    ? getEffectiveRole(session.user).tenantId ?? session.user.tenantId ?? null
+    : null;
+  if (!tenantId) return false;
+
   if (isPlatformFlag(key)) {
     const unleash = getUnleash();
-    if (unleash) {
-      const context = await buildContext(session, req);
-      return unleash.isEnabled(key, context);
-    }
+    if (unleash) return unleash.isEnabled(key, tenantContext(tenantId));
   }
 
   // Postgres-owned flag, or Unleash unconfigured: read the tenant boolean.
-  if (!session) return false;
-  const eff = getEffectiveRole(session.user);
-  const tenantId = eff.tenantId ?? session.user.tenantId ?? null;
-  if (!tenantId) return false;
   return readPostgresFlag(tenantId, key);
 }
 
@@ -83,9 +87,13 @@ export async function evaluatePlatformFlags(
   const platformKeys = keys.filter(isPlatformFlag);
   if (platformKeys.length === 0) return result;
 
+  const tenantId = session
+    ? getEffectiveRole(session.user).tenantId ?? session.user.tenantId ?? null
+    : null;
+
   const unleash = getUnleash();
-  if (unleash) {
-    const context = await buildContext(session, req);
+  if (unleash && tenantId) {
+    const context = tenantContext(tenantId);
     for (const key of platformKeys) {
       result[key] = unleash.isEnabled(key, context);
     }
@@ -93,9 +101,6 @@ export async function evaluatePlatformFlags(
   }
 
   // Unleash unconfigured: fall back to the session's effective-tenant booleans.
-  const tenantId = session
-    ? getEffectiveRole(session.user).tenantId ?? session.user.tenantId ?? null
-    : null;
   for (const key of platformKeys) {
     result[key] = tenantId ? await readPostgresFlag(tenantId, key) : false;
   }
