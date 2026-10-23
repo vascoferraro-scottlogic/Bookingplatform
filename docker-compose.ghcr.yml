@@ -50,13 +50,19 @@ services:
         condition: service_completed_successfully
     expose:
       - "3000"
+    # Reachable from this machine only; public access goes through the tunnel profile.
+    ports:
+      - "127.0.0.1:3000:3000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # Optional public tunnel. Off by default so a local `up` needs no Cloudflare
+  # account; enable with `COMPOSE_PROFILES=tunnel` plus CLOUDFLARED_TUNNEL_TOKEN.
   cloudflared:
+    profiles: ["tunnel"]
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     command:
@@ -64,9 +70,9 @@ services:
       - --no-autoupdate
       - run
       - --token
-      - ${CLOUDFLARED_TUNNEL_TOKEN:?CLOUDFLARED_TUNNEL_TOKEN is required}
+      - ${CLOUDFLARED_TUNNEL_TOKEN:-}
     environment:
-      CLOUDFLARED_TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN:?CLOUDFLARED_TUNNEL_TOKEN is required}
+      CLOUDFLARED_TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN:-}
     depends_on:
       app:
         condition: service_healthy
