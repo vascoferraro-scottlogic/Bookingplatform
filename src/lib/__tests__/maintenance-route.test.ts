@@ -20,6 +20,8 @@ jest.mock("@/lib/prisma", () => ({
       findUnique: jest.fn(),
       update: jest.fn(),
     },
+    membership: { findFirst: jest.fn() },
+    taskNote: { create: jest.fn() },
   },
 }));
 
@@ -45,6 +47,7 @@ test("SUBMITTED -> ASSIGNED requires maintenance_assign and updates task when al
   apiUtils.getEffective.mockReturnValue({ role: "USER", tenantId: "t1", isImpersonating: false, realUserId: "user1", realRole: "USER", impersonationId: null });
 
   perms.assertPermissionOrFail.mockResolvedValue(null);
+  prismaMock.prisma.membership.findFirst.mockResolvedValue({ id: "ms-maint1" }); // assignee holds a maintenance role in the tenant
 
   const req = { json: async () => ({ assignedToId: "maint1" }) } as unknown as NextRequest;
   const res = await PATCH(req, { params: Promise.resolve({ id: "task1" }) });
