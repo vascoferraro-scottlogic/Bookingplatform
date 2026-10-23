@@ -6,17 +6,25 @@ const connectionString = process.env.DATABASE_URL!;
 const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
+// Seed dates are relative to the run date so the demo data never expires
+// (Main Green is always in season, sample events are always in the future).
+const DAY_MS = 24 * 60 * 60 * 1000;
+const today = new Date();
+const thisYear = today.getUTCFullYear();
+const isoDay = (daysFromNow: number) => new Date(today.getTime() + daysFromNow * DAY_MS).toISOString().slice(0, 10);
+
 async function main() {
   // Platform admin
   const adminHash = await bcrypt.hash("admin123", 12);
   const platformAdmin = await prisma.user.upsert({
     where: { email: "admin@wlbooking.com" },
-    update: {},
+    update: { isPlatformAdmin: true },
     create: {
       email: "admin@wlbooking.com",
       name: "Platform Admin",
       passwordHash: adminHash,
       role: "PLATFORM_ADMIN",
+      isPlatformAdmin: true,
     },
   });
   console.log("Platform admin:", platformAdmin.email);
@@ -30,8 +38,8 @@ async function main() {
       slug: "lakeview-bowls",
       brandColor: "#16a34a",
       locale: "en",
-      seasonStart: "2026-04-01",
-      seasonEnd: "2026-12-31",
+      seasonStart: `${thisYear}-04-01`,
+      seasonEnd: `${thisYear}-12-31`,
       openingTime: "09:00",
       closingTime: "18:00",
       latitude: 54.9783,
@@ -89,33 +97,22 @@ async function main() {
     });
   }
 
-  // Demo GreenSeason override: 2026 season extended to year end so the Main
-  // Green is bookable during the autumn training cohort. Seed dates are valid
-  // until 31 Dec 2026 — refresh this and the sample events below after that.
-  await prisma.greenSeason.upsert({
-    where: { greenId_year: { greenId: green.id, year: 2026 } },
-    update: {},
-    create: {
-      greenId: green.id,
-      year: 2026,
-      startDate: "2026-04-01",
-      endDate: "2026-12-31",
-      note: "Extended to year end for autumn/winter play",
-    },
-  });
-
-  // Demo GreenSeason override: 2027 season opened early for championship
-  await prisma.greenSeason.upsert({
-    where: { greenId_year: { greenId: green.id, year: 2027 } },
-    update: {},
-    create: {
-      greenId: green.id,
-      year: 2027,
-      startDate: "2027-03-15",
-      endDate: "2027-10-15",
-      note: "Extended for County Championship",
-    },
-  });
+  // Demo GreenSeason overrides: the Main Green is open all year for this year
+  // and next, so it is bookable from today through the next 12 months whenever
+  // the seed is run. Dates are refreshed on every re-seed.
+  for (const year of [thisYear, thisYear + 1]) {
+    await prisma.greenSeason.upsert({
+      where: { greenId_year: { greenId: green.id, year } },
+      update: { startDate: `${year}-01-01`, endDate: `${year}-12-31` },
+      create: {
+        greenId: green.id,
+        year,
+        startDate: `${year}-01-01`,
+        endDate: `${year}-12-31`,
+        note: "Extended to year end for autumn/winter play",
+      },
+    });
+  }
 
   // Tenant admin user
   const tenantAdminHash = await bcrypt.hash("club123", 12);
@@ -179,16 +176,13 @@ async function main() {
   // Sample events
   const tenantAdmin = await prisma.user.findUnique({ where: { email: "admin@lakeview.club" } });
   if (tenantAdmin) {
-    const existingEvents = await prisma.event.count({ where: { tenantId: tenant.id } });
-    if (existingEvents === 0) {
-      await prisma.event.createMany({
-        data: [
+    const sampleEvents = [
           {
             tenantId: tenant.id,
             title: "Winter Open Day",
             description: "Come and try bowls! Free taster sessions for new players of all ages.",
             category: "OPEN_DAY",
-            date: "2026-11-14",
+            date: isoDay(21),
             startTime: "10:00",
             endTime: "16:00",
             visibility: "PUBLIC",
@@ -202,7 +196,7 @@ async function main() {
             category: "COMPETITION",
             format: "KNOCKOUT",
             playerCount: "PAIRS",
-            date: "2026-12-05",
+            date: isoDay(45),
             startTime: "09:00",
             endTime: "17:00",
             capacity: 32,
@@ -218,15 +212,19 @@ async function main() {
             title: "Friday Social Roll-Up",
             description: "Casual Friday afternoon social bowling. All welcome, no need to book.",
             category: "SOCIAL",
-            date: "2026-11-20",
+            date: isoDay(30),
             startTime: "14:00",
             endTime: "17:00",
             visibility: "MEMBERS_ONLY",
             status: "DRAFT",
             createdById: tenantAdmin.id,
           },
-        ],
-      });
+    ];
+    // Upsert by title so re-seeding refreshes the (relative) dates instead of duplicating.
+    for (const ev of sampleEvents) {
+      const existing = await prisma.event.findFirst({ where: { tenantId: tenant.id, title: ev.title } });
+      if (existing) await prisma.event.update({ where: { id: existing.id }, data: { date: ev.date } });
+      else await prisma.event.create({ data: ev as any });
     }
   }
 
@@ -471,8 +469,9 @@ async function seedAgents(demoTenantId: string) {
   for (const a of agents) {
     const user = await prisma.user.upsert({
       where: { email: a.email },
-      update: { name: a.name },
-      create: { email: a.email, name: a.name, passwordHash: sysHash, role: "PLATFORM_ADMIN" },
+      // System users only supply an id for the agent FKs, so they get the minimal role (B-22).
+      update: { name: a.name, role: "USER", isPlatformAdmin: false },
+      create: { email: a.email, name: a.name, passwordHash: sysHash, role: "USER" },
     });
     await prisma.agentDefinition.upsert({
       where: { slug: a.slug },
