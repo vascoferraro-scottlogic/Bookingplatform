@@ -11,6 +11,7 @@
  *   AGENT_BASE_URL  — defaults to http://localhost:3000
  *   DATABASE_URL    — required when using --all-tenants (script reads tenant list)
  */
+import "dotenv/config"; // load .env (AGENT_SECRET, DATABASE_URL, ...)
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 

@@ -2,6 +2,7 @@
 // reset a user's password. Usage:
 //   node scripts/dev-reset-password.mjs                  -> just list
 //   node scripts/dev-reset-password.mjs <email> <pw>     -> set password
+import "dotenv/config"; // load .env (AGENT_SECRET, DATABASE_URL, ...)
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 

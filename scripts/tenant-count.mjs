@@ -1,6 +1,7 @@
 // Prints the number of Tenant rows (or "error") so the init script can decide
 // whether a fresh database needs seeding. Kept dependency-light: reuses the
 // app's Prisma + pg driver adapter.
+import "dotenv/config"; // load .env (AGENT_SECRET, DATABASE_URL, ...)
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 

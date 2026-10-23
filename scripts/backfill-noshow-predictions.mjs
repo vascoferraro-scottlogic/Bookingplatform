@@ -12,6 +12,7 @@
  *   node --env-file=.env scripts/backfill-noshow-predictions.mjs
  */
 
+import "dotenv/config"; // load .env (AGENT_SECRET, DATABASE_URL, ...)
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 

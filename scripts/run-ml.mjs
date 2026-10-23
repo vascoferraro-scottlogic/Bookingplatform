@@ -11,6 +11,7 @@
  *   AGENT_BASE_URL  — defaults to http://localhost:3000
  */
 
+import "dotenv/config"; // load .env (AGENT_SECRET, DATABASE_URL, ...)
 const SECRET = process.env.AGENT_SECRET;
 const BASE = process.env.AGENT_BASE_URL ?? "http://localhost:3000";
 
