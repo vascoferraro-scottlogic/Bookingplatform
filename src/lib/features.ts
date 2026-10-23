@@ -129,8 +129,16 @@ export async function setFeatureFlag(tenantId: string, key: string, enabled: boo
   });
 }
 
-/** Get all flags for a tenant. */
+/**
+ * Get all flags for a tenant. DEFAULT_ON_FLAGS with no row are included as
+ * enabled, so the UI and the admin flags screen see what the gates enforce.
+ */
 export async function getTenantFlags(tenantId: string) {
-  return prisma.featureFlag.findMany({ where: { tenantId } });
+  const rows = await prisma.featureFlag.findMany({ where: { tenantId } });
+  const have = new Set(rows.map((r) => r.key));
+  const defaults = [...DEFAULT_ON_FLAGS]
+    .filter((key) => !have.has(key))
+    .map((key) => ({ tenantId, key, enabled: true }));
+  return [...rows, ...defaults];
 }
 

@@ -208,3 +208,20 @@ describe("evaluatePlatformFlags", () => {
     expect(client.isEnabled).not.toHaveBeenCalled();
   });
 });
+
+describe("getTenantFlags", () => {
+  test("[B-15] includes default-on flags as enabled when no row exists", async () => {
+    prismaMock.featureFlag.findMany = jest.fn().mockResolvedValue([{ tenantId: "t1", key: "events", enabled: true }]);
+    const { getTenantFlags } = await import("@/lib/features");
+    const flags = await getTenantFlags("t1");
+    expect(flags).toContainEqual({ tenantId: "t1", key: "maintenance", enabled: true });
+    expect(flags).toContainEqual({ tenantId: "t1", key: "events", enabled: true });
+  });
+
+  test("[B-15] an explicit maintenance row wins over the default", async () => {
+    prismaMock.featureFlag.findMany = jest.fn().mockResolvedValue([{ tenantId: "t1", key: "maintenance", enabled: false }]);
+    const { getTenantFlags } = await import("@/lib/features");
+    const flags = await getTenantFlags("t1");
+    expect(flags.filter((f) => f.key === "maintenance")).toEqual([{ tenantId: "t1", key: "maintenance", enabled: false }]);
+  });
+});
