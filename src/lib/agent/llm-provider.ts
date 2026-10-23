@@ -28,7 +28,7 @@ export interface LLMCallResult {
     promptTokens?: number;
     completionTokens?: number;
   };
-  /** Identifier of the underlying model used (e.g. "gemini-1.5-flash"). */
+  /** Identifier of the underlying model used (e.g. "gemini-2.5-flash"). */
   model: string;
 }
 

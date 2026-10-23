@@ -62,7 +62,7 @@ These belong in your `.env` (or your hosting platform's env config):
 |---|---|
 | `AGENT_LLM_PROVIDER` | `gemini` (default) — or unset to force the stub |
 | `AGENT_GEMINI_API_KEY` | Get a key at <https://aistudio.google.com/> |
-| `AGENT_GEMINI_MODEL` | Defaults to `gemini-1.5-flash` |
+| `AGENT_GEMINI_MODEL` | Defaults to `gemini-2.5-flash` |
 | `AGENT_OWM_API_KEY` | OpenWeatherMap key for triager weather context |
 | `AGENT_SECRET` | Bearer token for cron / CLI to hit `/api/agent/run` |
 | `AGENT_BASE_URL` | Override the URL the CLI hits — defaults to localhost |
