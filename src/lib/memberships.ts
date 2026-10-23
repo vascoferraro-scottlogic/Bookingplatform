@@ -56,6 +56,16 @@ export type ResolvedActiveContext = {
   locale: string;
 };
 
+/** SUSPENDED and CHURNED tenants can't be a user's active club (D-08). */
+export function isTenantBlocked(status: string | null | undefined): boolean {
+  return status === "SUSPENDED" || status === "CHURNED";
+}
+
+/** A membership the user can act on now: ACTIVE, in a tenant that isn't suspended or churned. */
+export function isUsableMembership(m: MembershipWithTenant): boolean {
+  return m.status === "ACTIVE" && !isTenantBlocked(m.tenant?.status);
+}
+
 /**
  * Resolve the active tenant context for a user given an optional preferred
  * tenantId (e.g. from a JWT `activeTenantId` claim). If the preferred id
@@ -73,13 +83,14 @@ export async function resolveActiveContext(
   }
 
   if (preferredTenantId) {
-    const match = memberships.find((m) => m.tenantId === preferredTenantId && m.status === "ACTIVE");
+    const match = memberships.find((m) => m.tenantId === preferredTenantId && isUsableMembership(m));
     if (match) {
       return { tenantId: match.tenantId, role: match.role, kind: match.kind, status: match.status, locale: match.tenant.locale };
     }
   }
 
-  const primary = pickPrimaryMembership(memberships);
+  // Never fall back to a suspended or churned tenant either (D-08).
+  const primary = pickPrimaryMembership(memberships.filter((m) => !isTenantBlocked(m.tenant?.status)));
   if (!primary) return { tenantId: null, role: "USER", kind: null, status: null, locale: "en" };
   return { tenantId: primary.tenantId, role: primary.role, kind: primary.kind, status: primary.status, locale: primary.tenant.locale };
 }
