@@ -9,6 +9,7 @@ import { useTrack } from "@/components/TrackingProvider";
 import { getClientEffectiveRole } from "@/lib/effective-role-client";
 import { useTranslations } from "next-intl";
 import { generateTimeSlots } from "@/lib/time-slots";
+import { bookingStart, startsMoreThanHoursAway, CANCELLATION_WINDOW_HOURS } from "@/lib/booking-time";
 
 type Tenant = { id: string; name: string; slug: string };
 
@@ -120,6 +121,20 @@ export default function BookingsPage() {
   const timeSlots = tenantConfig
     ? generateTimeSlots(tenantConfig.openingTime, tenantConfig.closingTime)
     : ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"];
+
+  // Booking times are club local time; the availability config carries no
+  // timezone, so use the default club timezone (Europe/London).
+  function canMemberCancel(b: Booking): boolean {
+    if (["REQUESTED", "APPROVED"].includes(b.status)) return true;
+    if (["RESERVED", "CONFIRMED"].includes(b.status)) {
+      return startsMoreThanHoursAway(bookingStart(b), CANCELLATION_WINDOW_HOURS);
+    }
+    return false;
+  }
+
+  function hasStarted(b: Booking): boolean {
+    return bookingStart(b).getTime() <= Date.now();
+  }
 
   async function updateStatus(id: string, status: string) {
     const res = await fetch(`/api/bookings/${id}`, {
@@ -293,7 +308,7 @@ export default function BookingsPage() {
                     {b.status === "RESERVED" && (
                       <button onClick={() => updateStatus(b.id, "CONFIRMED")} className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700">{t("actions.confirm")}</button>
                     )}
-                    {b.status === "CONFIRMED" && new Date(b.date).getTime() <= Date.now() && (
+                    {b.status === "CONFIRMED" && hasStarted(b) && (
                       <button onClick={() => updateStatus(b.id, "NO_SHOW")} className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded hover:bg-orange-200">{t("actions.markNoShow")}</button>
                     )}
                     {["APPROVED", "RESERVED", "CONFIRMED"].includes(b.status) && (
@@ -301,7 +316,7 @@ export default function BookingsPage() {
                     )}
                   </div>
                 )}
-                {!isAdmin && ["REQUESTED", "APPROVED"].includes(b.status) && (
+                {!isAdmin && canMemberCancel(b) && (
                   <button onClick={() => updateStatus(b.id, "CANCELLED")} className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200">Cancel</button>
                 )}
                 {b.status === "RESERVED" && b.payment?.status === "PENDING" && (
