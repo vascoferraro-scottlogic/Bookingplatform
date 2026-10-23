@@ -4,12 +4,12 @@ import { defaultLocale, locales } from "@/i18n/config";
 
 // Platform-mode (non-impersonating PLATFORM_ADMIN) users must remain inside
 // /dashboard, /dashboard/platform/* and the platform-only API surface. This
-// middleware bounces them out of tenant-plane dashboard paths to the picker.
+// proxy bounces them out of tenant-plane dashboard paths to the picker.
 const PLATFORM_ALLOWED_DASHBOARD_PREFIXES = ["/dashboard/platform"];
 const PLATFORM_ALLOWED_DASHBOARD_EXACT = new Set(["/dashboard"]);
 
 export default withAuth(
-  function middleware(req) {
+  function proxy(req) {
     const token = req.nextauth.token as
       | { role?: string; actingAs?: { tenantId?: string } | null; locale?: string }
       | null;
