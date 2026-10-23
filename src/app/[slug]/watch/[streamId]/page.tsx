@@ -12,7 +12,6 @@ type StreamWatch = {
   rink: { name: string; green: { name: string } };
   event: { id: string; title: string } | null;
   tenant: { name: string; slug: string };
-  streamKey: string | null;
   viewerCount: number;
   accessMethod?: string;
 };
