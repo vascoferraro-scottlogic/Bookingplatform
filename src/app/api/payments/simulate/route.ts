@@ -34,8 +34,12 @@ export async function POST(req: NextRequest) {
     const t = body.type;
     if (t === "payment_succeeded" || t === "payment.completed") {
       if (payment.status === "PAID") return NextResponse.json({ ok: true, action: "already_processed" });
+      if (payment.booking.status === "CANCELLED" || payment.booking.status === "REFUNDED") {
+        return jsonError(`Cannot complete a payment for a ${payment.booking.status.toLowerCase()} booking`, 409);
+      }
       await prisma.bookingPayment.update({ where: { id: payment.id }, data: { status: "PAID" } });
-      await prisma.booking.update({ where: { id: payment.bookingId }, data: { status: "CONFIRMED" } });
+      // Only a RESERVED booking is confirmed by payment (transition map).
+      await prisma.booking.updateMany({ where: { id: payment.bookingId, status: "RESERVED" }, data: { status: "CONFIRMED" } });
       logAudit({
         session: { user: { id: "system", role: "PLATFORM_ADMIN", tenantId: payment.booking.tenantId } },
         action: "payment.webhook_confirmed",
@@ -46,6 +50,8 @@ export async function POST(req: NextRequest) {
       });
       return NextResponse.json({ ok: true, action: "processed" });
     } else if (t === "payment_failed" || t === "payment.failed") {
+      // A failure never overrides a payment that has already settled.
+      if (payment.status !== "PENDING") return NextResponse.json({ ok: true, action: "ignored" });
       await prisma.bookingPayment.update({ where: { id: payment.id }, data: { status: "FAILED" } });
       logAudit({
         session: { user: { id: "system", role: "PLATFORM_ADMIN", tenantId: payment.booking.tenantId } },
@@ -57,7 +63,9 @@ export async function POST(req: NextRequest) {
       });
       return NextResponse.json({ ok: true, action: "processed" });
     } else if (t === "payment.refunded" || t === "payment_refunded") {
+      if (payment.status !== "PAID" && payment.status !== "REFUND_FAILED") return NextResponse.json({ ok: true, action: "ignored" });
       await prisma.bookingPayment.update({ where: { id: payment.id }, data: { status: "REFUNDED" } });
+      await prisma.booking.updateMany({ where: { id: payment.bookingId, status: "CANCELLED" }, data: { status: "REFUNDED" } });
       return NextResponse.json({ ok: true, action: "processed" });
     } else {
       return jsonError("Unhandled booking event type");
