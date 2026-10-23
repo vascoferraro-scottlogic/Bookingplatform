@@ -10,11 +10,13 @@ import {
   buildReceiptsAndPayments,
   buildStatementOfAssetsAndLiabilities,
   receiptsAndPaymentsToCSV,
+  statementOfAssetsAndLiabilitiesToCSV,
 } from "@/lib/charity/reports";
 
 /**
- * GET /api/charity/reports?yearId=...&format=json|csv
- * Returns both R&P + SoAL when format=json (default) or just R&P CSV when format=csv.
+ * GET /api/charity/reports?yearId=...&format=json|csv|soal-csv
+ * Returns both R&P + SoAL when format=json (default), the R&P CSV when format=csv,
+ * or the Statement of Assets & Liabilities CSV when format=soal-csv.
  */
 export async function GET(req: NextRequest) {
   const { session, error } = await getSessionOrFail();
@@ -36,6 +38,25 @@ export async function GET(req: NextRequest) {
     where: { id: yearId, tenantId },
   });
   if (!year) return jsonError("yearId not found", 404);
+
+  if (format === "soal-csv") {
+    const soal = await buildStatementOfAssetsAndLiabilities(tenantId, yearId);
+    logAudit({
+      session,
+      action: "charity.report.exported",
+      entity: "CharityFinancialYear",
+      entityId: yearId,
+      tenantId,
+      meta: { format: "soal-csv" },
+    });
+    return new NextResponse(statementOfAssetsAndLiabilitiesToCSV(soal), {
+      status: 200,
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="soal-${year.startDate}-to-${year.endDate}.csv"`,
+      },
+    });
+  }
 
   const rp = await buildReceiptsAndPayments(tenantId, yearId);
 

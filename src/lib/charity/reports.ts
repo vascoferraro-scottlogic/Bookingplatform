@@ -1,3 +1,4 @@
+import { csvCell } from "@/lib/csv";
 import { prisma } from "@/lib/prisma";
 import type {
   CharityCategoryKind,
@@ -199,6 +200,26 @@ export async function buildStatementOfAssetsAndLiabilities(
   };
 }
 
+/** Render the Statement of Assets & Liabilities as CSV. Amounts in pounds (decimal). */
+export function statementOfAssetsAndLiabilitiesToCSV(soal: StatementOfAssetsAndLiabilities): string {
+  const lines: string[] = [];
+  const row = (...cells: (string | number | null)[]) => lines.push(cells.map(csvCell).join(","));
+
+  row("Section", "Kind", "Name", "Amount (£)", "Notes");
+  row("ASSETS", "", "", "", "");
+  if (soal.bankBalanceAtEnd != null) {
+    row("Asset", "BANK", "Bank balance at year end", poundsCell(soal.bankBalanceAtEnd), "");
+  }
+  for (const a of soal.assets) row("Asset", a.kind, a.name, poundsCell(a.amount), a.notes);
+  row("Total assets", "", "", poundsCell(soal.totalAssets), "");
+  row("LIABILITIES", "", "", "", "");
+  for (const l of soal.liabilities) row("Liability", l.kind, l.name, poundsCell(l.amount), l.notes);
+  row("Total liabilities", "", "", poundsCell(soal.totalLiabilities), "");
+  row("Net assets", "", "", poundsCell(soal.netAssets), "");
+
+  return lines.join("\n");
+}
+
 /** Render the R&P report as CSV. Amounts in pounds (decimal). */
 export function receiptsAndPaymentsToCSV(rp: ReceiptsAndPayments): string {
   const fundNames = rp.funds.map((f) => f.name);
@@ -249,10 +270,3 @@ function poundsCell(pence: number): string {
   return pounds.toFixed(2);
 }
 
-function csvCell(s: string): string {
-  if (s === undefined || s === null) return "";
-  if (/[",\n]/.test(s)) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}

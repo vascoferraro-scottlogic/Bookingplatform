@@ -1,3 +1,4 @@
+import { csvCell } from "@/lib/csv";
 import { prisma } from "@/lib/prisma";
 import type { BillingStatus, PaymentStatus } from "@prisma/client";
 import { paymentProvider } from "@/lib/payments";
@@ -323,12 +324,14 @@ export function invoiceToCSV(
     ["Description", "Quantity", "Unit Price (£)", "Total (£)", "Category"].join(","),
     ...lineItems.map((li) =>
       [
-        `"${li.description}"`,
+        li.description,
         li.quantity,
         (li.unitPricePence / 100).toFixed(2),
         (li.totalPricePence / 100).toFixed(2),
         li.category,
-      ].join(","),
+      ]
+        .map(csvCell)
+        .join(","),
     ),
   ];
   return rows.join("\n");
