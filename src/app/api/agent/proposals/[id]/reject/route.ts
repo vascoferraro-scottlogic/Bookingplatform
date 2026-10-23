@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSessionOrFail, jsonError } from "@/lib/api-utils";
+import { getSessionOrFail, assertEffectiveRoleOrFail, getEffective, jsonError } from "@/lib/api-utils";
 import { logAudit } from "@/lib/audit";
 import { rejectProposal } from "@/lib/agent/committers";
 
@@ -28,13 +28,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return jsonError("Non-tenant proposals are not approvable here yet", 400);
   }
 
-  const role = session.user.actingAs?.role ?? session.user.role;
-  const actingTenantId = session.user.actingAs?.tenantId ?? session.user.tenantId;
-  const isPlatformAdmin = role === "PLATFORM_ADMIN";
-  const isOnTenant = actingTenantId === proposal.tenantId;
-  const hasReviewRole = ["TENANT_ADMIN", "MAINTENANCE"].includes(role);
-
-  if (!(isPlatformAdmin || (isOnTenant && hasReviewRole))) {
+  // Effective role: a platform admin must be impersonating the tenant first.
+  const roleErr = assertEffectiveRoleOrFail(session, "MAINTENANCE");
+  if (roleErr) return roleErr;
+  if (getEffective(session).tenantId !== proposal.tenantId) {
     return jsonError("Forbidden", 403);
   }
 
