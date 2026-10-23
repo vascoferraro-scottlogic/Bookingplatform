@@ -4,21 +4,8 @@ import { getSessionOrFail, assertEffectiveRoleOrFail, getEffective, jsonError } 
 import { logAudit } from "@/lib/audit";
 import { sendEmail, sendSocial } from "@/lib/outbound";
 import { isFeatureEnabled } from "@/lib/features";
-
-// Chapters required before go-live. Chapter 5 (greens) is excluded when the
-// bookings capability flag is off — organisations with no facilities skip it.
-const ALL_REQUIRED_CHAPTERS = [1, 2, 3, 4, 5, 6, 7, 8];
-const BASE_REQUIRED_CHAPTERS = [1, 2, 3, 4, 6, 7, 8]; // ch5 optional without bookings
-
-function parseCompleted(json: string): number[] {
-  try {
-    const parsed = JSON.parse(json);
-    if (Array.isArray(parsed)) return parsed.filter((n): n is number => typeof n === "number");
-    return [];
-  } catch {
-    return [];
-  }
-}
+import { Prisma } from "@prisma/client";
+import { requiredChapters, parseCompleted } from "@/lib/onboarding/chapters";
 
 /**
  * GET /api/onboarding/go-live
@@ -57,8 +44,8 @@ export async function GET(_req: NextRequest) {
   }
   const completed = new Set(progress ? parseCompleted(progress.completedChapters) : []);
   const bookingsOn = await isFeatureEnabled(tenantId, "bookings");
-  const requiredChapters = bookingsOn ? ALL_REQUIRED_CHAPTERS : BASE_REQUIRED_CHAPTERS;
-  const missing = requiredChapters.filter((n) => !completed.has(n));
+  const required = requiredChapters(bookingsOn);
+  const missing = required.filter((n) => !completed.has(n));
   if (missing.length) {
     blockers.push(`Complete chapter${missing.length > 1 ? "s" : ""} ${missing.join(", ")}`);
   }
@@ -114,8 +101,8 @@ export async function POST(_req: NextRequest) {
   });
   const completed = new Set(progress ? parseCompleted(progress.completedChapters) : []);
   const bookingsOn = await isFeatureEnabled(tenantId, "bookings");
-  const requiredChapters = bookingsOn ? ALL_REQUIRED_CHAPTERS : BASE_REQUIRED_CHAPTERS;
-  const missing = requiredChapters.filter((n) => !completed.has(n));
+  const required = requiredChapters(bookingsOn);
+  const missing = required.filter((n) => !completed.has(n));
   if (missing.length) {
     return jsonError(
       `Complete chapter${missing.length > 1 ? "s" : ""} ${missing.join(", ")} before going live`,
@@ -134,20 +121,29 @@ export async function POST(_req: NextRequest) {
     select: { id: true, email: true, role: true, token: true, expiresAt: true },
   });
 
-  await prisma.$transaction([
-    prisma.tenant.update({
-      where: { id: tenantId },
-      data: { status: "ACTIVE", active: true, goLiveAt: now },
-    }),
-    prisma.userInvitation.updateMany({
-      where: { tenantId, status: "QUEUED" },
-      data: { status: "PENDING" },
-    }),
-    prisma.onboardingProgress.update({
-      where: { tenantId },
-      data: { completedAt: now },
-    }),
-  ]);
+  // The flip is conditional on the tenant still being in ONBOARDING, so two
+  // concurrent go-lives can't both succeed (the loser matches no row → 409).
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.tenant.update({
+        where: { id: tenantId, status: "ONBOARDING", goLiveAt: null },
+        data: { status: "ACTIVE", active: true, goLiveAt: now },
+      });
+      await tx.userInvitation.updateMany({
+        where: { tenantId, status: "QUEUED" },
+        data: { status: "PENDING" },
+      });
+      await tx.onboardingProgress.update({
+        where: { tenantId },
+        data: { completedAt: now },
+      });
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+      return jsonError("Already live", 409);
+    }
+    throw err;
+  }
 
   // Fire outbound stubs after the commit (so a stub failure can't roll back
   // the status flip — go-live must be durable).

@@ -3,19 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { getSessionOrFail, assertEffectiveRoleOrFail, jsonError } from "@/lib/api-utils";
 import { resolveTenantId } from "@/lib/tenant";
 import { logAudit } from "@/lib/audit";
+import { TOTAL_CHAPTERS, parseCompleted, chapterDataComplete } from "@/lib/onboarding/chapters";
 
-const TOTAL_CHAPTERS = 10;
 const CURRENT_SCHEMA_VERSION = 2; // bump when chapter set changes shape
-
-function parseCompleted(json: string): number[] {
-  try {
-    const parsed = JSON.parse(json);
-    if (Array.isArray(parsed)) return parsed.filter((n): n is number => typeof n === "number");
-    return [];
-  } catch {
-    return [];
-  }
-}
 
 /**
  * One-shot, idempotent migration of in-progress users from a previous chapter
@@ -57,6 +47,23 @@ export async function GET(req: NextRequest) {
 
   let progress = await prisma.onboardingProgress.findUnique({ where: { tenantId } });
   if (!progress) {
+    // A live tenant has finished the wizard: don't create a progress row for
+    // it (that would send admin logins back into the wizard).
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true, goLiveAt: true },
+    });
+    if (tenant && (tenant.status === "ACTIVE" || tenant.goLiveAt)) {
+      return NextResponse.json({
+        tenantId,
+        currentChapter: TOTAL_CHAPTERS,
+        completedChapters: Array.from({ length: TOTAL_CHAPTERS }, (_, i) => i + 1),
+        completedAt: tenant.goLiveAt,
+        lastAnswerAt: null,
+        totalChapters: TOTAL_CHAPTERS,
+        isComplete: true,
+      });
+    }
     progress = await prisma.onboardingProgress.create({
       data: { tenantId, currentChapter: 1, completedChapters: "[]" },
     });
@@ -103,7 +110,8 @@ export async function GET(req: NextRequest) {
  * Mark a chapter completed and/or set the current chapter.
  * Body: { chapter?: number; markComplete?: boolean }
  *  - chapter: which chapter the user is on / just completed
- *  - markComplete: also add `chapter` to completedChapters
+ *  - markComplete: request that `chapter` be added to completedChapters; it is
+ *    only recorded when the chapter's data is present (derived server-side)
  * If completedChapters then includes all 1..TOTAL_CHAPTERS, sets completedAt.
  */
 export async function POST(req: NextRequest) {
@@ -129,7 +137,15 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.onboardingProgress.findUnique({ where: { tenantId } });
   const completed = new Set(existing ? parseCompleted(existing.completedChapters) : []);
-  if (markComplete && chapter !== undefined) completed.add(chapter);
+  // Completion is derived server-side: the chapter's data must actually exist.
+  let chapterCompleted = false;
+  if (markComplete && chapter !== undefined) {
+    chapterCompleted = await chapterDataComplete(tenantId, chapter, {
+      completed,
+      subscriptionAttestedAt: existing?.subscriptionAttestedAt ?? null,
+    });
+    if (chapterCompleted) completed.add(chapter);
+  }
 
   const next = chapter !== undefined ? chapter : (existing?.currentChapter ?? 1);
 
@@ -148,7 +164,7 @@ export async function POST(req: NextRequest) {
     update: data,
   });
 
-  if (markComplete && chapter !== undefined) {
+  if (chapterCompleted) {
     logAudit({ session, action: "onboarding.chapter.completed", entity: "OnboardingProgress", entityId: progress.id, tenantId, meta: { chapter } });
   }
 
